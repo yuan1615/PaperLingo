@@ -1,0 +1,14 @@
+Gemma is provided under and subject to the Gemma Terms of Use found at ai.google.dev/gemma/terms.
+
+OmniVoice model: k2-fsa/OmniVoice, revision c5fdb5ccb189668d56333f77ba2629f4cd7535f4.
+Authors: Han Zhu, Lingxuan Ye, Wei Kang, Zengwei Yao, Liyong Guo, Fangjun Kuang, Zhifeng Han, Weiji Zhuang, Long Lin, Daniel Povey.
+https://huggingface.co/k2-fsa/OmniVoice
+Model weights: CC-BY-NC, as stated in the included official model card. Code: Apache-2.0.
+
+TranslateGemma 4B Q4_K_M: Google, distributed by Ollama, manifest c49d986b0764f5881c476eb21435bb62b7abc62347aab3d4a6071e811be510a1.
+All use of the included Gemma model must comply with Gemma Terms of Use and the Gemma Prohibited Use Policy included in this directory, including Section 3.2 use restrictions.
+Model weights are copied without modification; runtime configuration and app packaging are by PaperLingo.
+
+Python and dependency licenses remain in Runtime/python/lib/python3.11 and package .dist-info directories. Ollama component licenses remain in Runtime/ollama.
+
+This product includes the unmodified Boson AI Higgs Audio V2 tokenizer distributed with OmniVoice. See Higgs-Audio-Tokenizer-LICENSE.txt and the original model README for its license and attribution.

@@ -1,0 +1,12 @@
+* text=auto
+*.swift text eol=lf
+*.py text eol=lf
+*.sh text eol=lf
+*.command text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.json text eol=lf
+*.png binary
+*.icns binary
+# Preserve upstream notices verbatim and keep vendored HTML out of language stats.
+packaging/third-party/** linguist-vendored -whitespace

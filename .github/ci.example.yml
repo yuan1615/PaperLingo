@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    name: macOS build and checks
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Show toolchain
+        run: |
+          swift --version
+          python3 --version
+      - name: Check shell syntax
+        run: |
+          for file in scripts/*.sh ./*.command; do bash -n "$file"; done
+      - name: Check Python bridge and downloads without models
+        run: python3 -m unittest discover -s engine/tests -v
+      - name: Check Swift core
+        run: swift run --disable-sandbox PaperCoreChecks
+      - name: Build native app
+        run: bash scripts/build-app.sh
+      - name: Verify app signature
+        run: codesign --verify --deep --strict dist/PaperLingo.app

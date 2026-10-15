@@ -1,0 +1,32 @@
+name: Bug report / 问题反馈
+description: 报告可复现的应用、模型或打包问题
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: 请勿上传个人论文、词库、数据库或凭据；安全漏洞请按 SECURITY.md 私下报告。
+  - type: textarea
+    id: environment
+    attributes:
+      label: 运行环境
+      description: macOS、M 系列型号、内存、PaperLingo 版本，以及源码构建或离线安装包。
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 复现步骤
+      description: 描述能稳定触发问题的最小操作。
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: 预期与实际行为
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 脱敏日志或截图
+      description: 涉及语音时请注明 OmniVoice / 系统语音、文本长度与是否首次加载。

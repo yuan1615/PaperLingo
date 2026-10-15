@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 私下报告安全问题
+    url: https://github.com/yuan1615/PaperLingo/security/advisories/new
+    about: 请勿在公开 Issue 中提交安全漏洞细节。

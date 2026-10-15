@@ -1,0 +1,21 @@
+name: Feature request / 功能建议
+description: 提出阅读或学习流程的改进建议
+title: "[Feature]: "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 希望解决的问题
+      description: 描述具体阅读或学习场景。
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 期望的交互
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 可选方案或补充信息
