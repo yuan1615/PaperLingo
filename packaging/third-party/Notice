@@ -12,3 +12,7 @@ Model weights are copied without modification; runtime configuration and app pac
 Python and dependency licenses remain in Runtime/python/lib/python3.11 and package .dist-info directories. Ollama component licenses remain in Runtime/ollama.
 
 This product includes the unmodified Boson AI Higgs Audio V2 tokenizer distributed with OmniVoice. See Higgs-Audio-Tokenizer-LICENSE.txt and the original model README for its license and attribution.
+
+PaperLingo v0.2 research models: Qwen3.6-27B (Copyright 2026 Alibaba Cloud) and Qwen3-Embedding-0.6B, by Qwen / Alibaba Cloud, under the Apache License 2.0. See Qwen3.6-27B-LICENSE.txt and Qwen3-Embedding-0.6B-LICENSE.txt.
+Official models: https://huggingface.co/Qwen/Qwen3.6-27B and https://huggingface.co/Qwen/Qwen3-Embedding-0.6B.
+Ollama variants: qwen3.6:27b-q4_K_M and qwen3-embedding:0.6b. Weights are packaged without application-side modification. Actual model versions and file hashes are recorded in distribution.json.

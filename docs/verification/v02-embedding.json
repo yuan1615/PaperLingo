@@ -1,0 +1,12 @@
+{
+  "analysis_model" : "qwen3.6:27b-q4_K_M",
+  "cross_language_scores" : [
+    0.73331350817978858,
+    0.26201681092771312,
+    0.23343889482005434
+  ],
+  "embedding_dimensions" : 1024,
+  "embedding_model" : "qwen3-embedding:0.6b",
+  "mode" : "embedding-only",
+  "passed" : true
+}

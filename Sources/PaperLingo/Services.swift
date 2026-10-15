@@ -62,9 +62,14 @@ enum LocalAPI {
     @Published var speechReady = false
     @Published var error: String?
     @Published var checking = false
+    @Published var analysisReady=false
+    @Published var embeddingReady=false
+    @Published var analysisStatus="尚未检查"
+    @Published var embeddingStatus="尚未检查"
+    var modelDigests:[String:String]=[:]
     private var ollama: Process?
     private var speech: Process?
-    private var logHandles: [FileHandle] = []
+    private var logHandles: [String:FileHandle] = [:]
     let runtime: URL
     let workDirectory: URL
     let bundled: Bool
@@ -84,11 +89,16 @@ enum LocalAPI {
             let data = try await LocalAPI.request(port: 11434, path: "/api/tags")
             let result = try JSONSerialization.jsonObject(with: data) as? [String: Any]
             let models = result?["models"] as? [[String: Any]] ?? []
+            modelDigests=Dictionary(models.compactMap{m -> (String,String)? in guard let name=m["name"] as? String,let digest=m["digest"] as? String else{return nil};return(name,digest)},uniquingKeysWith:{$1})
+            analysisReady=modelDigests[ResearchModels.analysis] != nil
+            embeddingReady=modelDigests[ResearchModels.embedding] != nil
+            analysisStatus=analysisReady ? "已就绪 · Qwen3.6 27B Q4" : "研究模型尚未安装"
+            embeddingStatus=embeddingReady ? "已就绪 · Qwen3 Embedding 0.6B" : "检索模型尚未安装"
             let name = UserDefaults.standard.string(forKey: "translationModel") ?? "translategemma:4b"
             let expected=name.contains(":") ? name : name+":latest"
             translationReady = models.contains { ($0["name"] as? String) == expected || ($0["model"] as? String) == expected }
             translationStatus = translationReady ? "已就绪 · \(name)" : "Ollama 已连接 · 模型未安装"
-        } catch { translationReady = false; translationStatus = "未启动" }
+        } catch { translationReady = false; translationStatus = "未启动";analysisReady=false;embeddingReady=false;analysisStatus="Ollama 未启动";embeddingStatus="Ollama 未启动";modelDigests=[:] }
         do {
             let data = try await LocalAPI.request(port: 8765, path: "/health")
             let result = try JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -134,7 +144,8 @@ enum LocalAPI {
         try FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
         let logURL = logs.appendingPathComponent(log)
         if !FileManager.default.fileExists(atPath: logURL.path) { FileManager.default.createFile(atPath: logURL.path, contents: nil) }
-        let handle = try FileHandle(forWritingTo: logURL); try handle.seekToEnd(); logHandles.append(handle)
+        let handle = try FileHandle(forWritingTo: logURL); try handle.seekToEnd()
+        try? logHandles.removeValue(forKey:log)?.close();logHandles[log]=handle
         let process = Process(); process.executableURL = url; process.arguments = args
         var environment = ProcessInfo.processInfo.environment
         environment["HF_HOME"] = workDirectory.appendingPathComponent("huggingface").path
@@ -150,6 +161,8 @@ enum LocalAPI {
         environment["OLLAMA_HOST"] = "127.0.0.1:11434"
         environment["OLLAMA_NO_CLOUD"] = "1"
         environment["OLLAMA_CONTEXT_LENGTH"] = "4096"
+        environment["OLLAMA_MAX_LOADED_MODELS"] = "1"
+        environment["OLLAMA_NUM_PARALLEL"] = "1"
         environment["NO_PROXY"] = "127.0.0.1,localhost"
         process.environment = environment; process.standardOutput = handle; process.standardError = handle
         try process.run(); return process
@@ -158,11 +171,24 @@ enum LocalAPI {
         if ollama?.isRunning == true { ollama?.terminate() }
         if speech?.isRunning == true { speech?.terminate() }
         ollama = nil; speech = nil
+        for handle in logHandles.values {try? handle.close()};logHandles.removeAll()
         Task { await check() }
+    }
+    func pauseSpeechForResearch() async -> Bool {
+        guard let speech,speech.isRunning else{return false}
+        speech.terminate()
+        for _ in 0..<40 {
+            if !speech.isRunning {break}
+            try? await Task.sleep(for:.milliseconds(50))
+        }
+        self.speech=nil;speechReady=false;speechStatus="论文整理期间暂停，完成后恢复"
+        try? logHandles.removeValue(forKey:"omnivoice.log")?.close()
+        return true
     }
 }
 
 @MainActor final class AudioService: NSObject, ObservableObject, AVAudioPlayerDelegate, AVSpeechSynthesizerDelegate {
+    var researchBusy=false
     @Published var busy = false
     @Published var playing = false
     @Published var generating = false
@@ -182,6 +208,7 @@ enum LocalAPI {
     private var generation = UUID()
     override init() { super.init(); synthesizer.delegate = self }
     func speak(_ text: String, slow: Bool = false) {
+        guard !researchBusy || UserDefaults.standard.string(forKey:"speechProvider")=="system" else {error="论文整理进行中；可取消整理，或切换系统语音继续试听。";return}
         stop()
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }

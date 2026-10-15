@@ -10,12 +10,12 @@ Read papers. Learn words in context. Listen and review locally.
 
 ![macOS 14+](https://img.shields.io/badge/macOS-14%2B-black)
 ![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-M%20series-blue)
-![Version](https://img.shields.io/badge/version-0.1.0-blue)
+![Version](https://img.shields.io/badge/version-0.2.0-blue)
 [![MIT](https://img.shields.io/badge/source%20license-MIT-green)](LICENSE)
 
-PaperLingo 将 PDF / 网页阅读、选词翻译、英文发音和间隔复习放在同一阅读空间。使用 TranslateGemma 4B 本地翻译、OmniVoice 本地语音合成；查阅过的生词与短语成为自己的每日练习材料。
+PaperLingo 将 PDF / 网页阅读、选词翻译、英文发音和间隔复习放在同一阅读空间。v0.2 新增研究库：按分类整理文献、保留个人笔记、生成带原文证据的中文汇总，并用中文描述检索英文论文。翻译、发音、整理和语义检索均使用本地模型。
 
-当前为 **v0.1.0**。本仓库提供源码、模型安装和离线打包脚本；**不包含模型权重、Python 运行环境、DMG 安装包或个人学习记录**。
+当前开发版本为 **v0.2.0**，设计与实施范围见 [v0.2 规划](docs/V0.2_PLAN.md)。本仓库提供源码、模型安装和离线打包脚本；**不包含模型权重、Python 运行环境、DMG 安装包或个人学习记录**。此前分发的 v0.1 离线包不含研究模型，不能替代 v0.2 安装。
 
 [快速开始](#快速开始) · [使用方式](#使用方式) · [项目架构](#项目架构) · [开发指南](docs/DEVELOPMENT.md) · [离线打包](docs/DISTRIBUTION.md) · [变更记录](CHANGELOG.md)
 
@@ -31,12 +31,16 @@ PaperLingo 将 PDF / 网页阅读、选词翻译、英文发音和间隔复习�
 | 个人词库 | 查询频率统计、上下文、来源跳转、搜索、删除和 JSON 导出 |
 | 每日复习 | 认词与听力两种模式，四级自评分，默认每天约 10 分钟、每组最多 20 项 |
 | 本地提醒 | 默认北京时间 20:30，可在设置调整；通知提供认词 / 听力入口 |
+| 研究库 | 作者、年份、出处、DOI / arXiv、分类、标签、收藏、阅读状态、阅读时间及保留理由 |
+| 个人笔记 | 想法、疑问、待办、复现记录；选区摘录与页码；Markdown 源码编辑与导出 |
+| 论文整理 | 研究问题、方法、贡献、结果、局限和复用线索；每个显示的要点保留原文摘录及跳转 |
+| 文献检索 | 标题、档案、笔记、汇总及正文关键词搜索；中英跨语言语义检索与页码定位 |
 
 ## 环境要求
 
 - **Apple Silicon（M 系列）Mac，macOS 14 或更高版本**；当前完整模型安装与打包脚本面向 arm64。
-- 建议 **16 GB 或以上统一内存**；实际联调环境为 M2 Pro / 32 GB。
-- 建议预留 **20 GB 或以上磁盘空间**；同时保留开发环境、打包副本和 DMG 时需要更多空间。
+- v0.2 全部模型建议 **32 GB 或以上统一内存**；目标设备为 M2 Pro / 32 GB。只使用 v0.1 翻译与语音功能可采用 16 GB 或以上配置。
+- 首次从源码安装全部模型建议预留 **35 GB 或以上磁盘空间**；新增研究模型约 18.1 GB。同时保留运行环境、离线副本和 DMG 时需要更多空间，打包脚本会预检。
 - 从源码构建需要 Xcode Command Line Tools（Swift 5.9+）和 `python3`；模型安装脚本会另外下载独立 Python 3.11.17。
 - 首次下载模型和导入网页需要联网；本地 PDF、翻译、发音与复习可离线使用。
 
@@ -56,17 +60,20 @@ bash scripts/build-app.sh
 # 首次安装两个模型及项目内运行环境，需要联网
 bash scripts/setup-local.sh
 
-# 打开 app，在设置中检查两个本地引擎是否就绪
+# 安装 v0.2 研究模型，约 18.1 GB，支持中断后重新运行
+python3 engine/install_research.py
+
+# 打开 app，在设置中检查基础引擎与研究模型是否就绪
 open dist/PaperLingo.app
 ```
 
 下载中断后可以重新执行安装脚本，已有缓存和下载片段会复用。运行环境位于项目 `.runtime/`，不替换系统 Python。模型未安装时也能导入、阅读论文，并选择系统语音体验朗读。
 
-亦可双击项目根目录的 `启动 PaperLingo.command` 与 `安装本地模型.command`。开发版 app 依赖当前项目的 `.runtime/`；移动项目后请重新构建。
+亦可双击项目根目录的 `启动 PaperLingo.command`、`安装本地模型.command` 和 `安装研究模型.command`。开发版 app 依赖当前项目的 `.runtime/`；移动项目后请重新构建。
 
 ### 安装完整离线包
 
-如果你已取得单独分发的 `PaperLingo-0.1.0-macOS-arm64-offline.dmg`，双击后把 app 拖到「应用程序」。该版本包含 Python、Ollama 和全部模型，无需开发工具或再次下载模型。
+如果你已取得单独分发的 `PaperLingo-0.1.0-macOS-arm64-offline.dmg`，双击后把 app 拖到「应用程序」。该版本包含 Python、Ollama 和 v0.1 翻译、语音模型，无需开发工具或再次下载模型。本次 v0.2 开发没有生成新的完整离线镜像。
 
 当前离线包采用 ad-hoc 签名，未做 Apple Developer ID 公证。首次若被 macOS 拦截，请按 [安装与迁移说明](packaging/INSTALL-zh.txt) 在「隐私与安全性」中允许打开。仓库的源码 ZIP 不是可直接安装的 app。
 
@@ -77,6 +84,13 @@ open dist/PaperLingo.app
 3. 阅读时收起侧栏或进入专注模式，浮动播放器支持暂停、继续、收起和停止。
 4. 打开「今日练习」，先回想含义或听音辨认，再揭晓答案，并用「忘记 / 模糊 / 记住 / 轻松」评分。
 5. 在设置中授权 macOS 通知，调整每日复习时间、音色和语速。
+6. 打开「研究库」编辑论文档案，记录研究方向、保留理由和阅读状态。读原文时用 `⇧⌘N` 把当前选区与页码附入笔记。
+7. 点击「用本地模型整理论文」手动触发汇总。查看原文证据，核对文献资料建议后再采用；手工资料和个人笔记独立保留。
+8. 输入关键词立即搜索；建立检索索引后点击「按意思查找」，例如“长句语音合成如何降低首段等待”。从结果打开对应原文页。
+
+整理按全文片段逐组进行，再合并为六类要点；长论文可能需要较长时间。支持取消、重试与分段缓存，结束后卸载研究模型。整理期间暂缓本地翻译与 OmniVoice 推理，仍可阅读、写笔记、关键词检索和使用系统语音，避免大模型争抢统一内存。
+
+原文摘录会进行文本匹配校验，但这不等于证明 AI 对证据的解释正确。缺少证据的要点不显示；作者、年份和数字仍应对照原文核实。
 
 查询频率只在主动查阅时累计；改变选区不会反复计数。复习优先级结合查询频率、遗忘次数和逾期程度，不把个人查询次数当作通用词频。
 
@@ -92,6 +106,9 @@ open dist/PaperLingo.app
 | `⌥⌘I` | 显示 / 收起学习助手 |
 | `⌘L` | 朗读选区 |
 | `⌘.` | 停止播放 |
+| `⇧⌘K` | 打开研究库 |
+| `⇧⌘N` | 为当前论文新建笔记并附入选区 |
+| `⌘S` | 在笔记编辑器中保存 |
 
 ## 项目架构
 
@@ -103,6 +120,9 @@ flowchart TD
     Reader --> Speech[Python HTTP Bridge / OmniVoice]
     Speech --> Audio[分段 WAV / 有序播放队列]
     Store --> Review[认词 / 听力 / macOS 本地提醒]
+    Reader --> Library[研究库 / 个人笔记 / SQLite FTS5]
+    Library --> Digest[Qwen3.6 27B Q4 / 分段整理与证据]
+    Library --> Retrieval[Qwen3 Embedding 0.6B / 原文语义索引]
 ```
 
 - **界面**：SwiftUI + AppKit；PDFKit 展示论文，NSTextView 展示提取后的网页正文。
@@ -110,6 +130,8 @@ flowchart TD
 - **翻译**：URLSession → `127.0.0.1:11434` → Ollama `translategemma:4b`（Q4_K_M）。
 - **语音**：URLSession → `127.0.0.1:8765` → OmniVoice 0.2.1 / PyTorch MPS。推理串行执行，客户端播放与下一段推理并行。
 - **分段协议**：`POST /speak/stream` 输出 NDJSON，依次返回 `start → audio → … → done`；支持取消与片段缓存。
+- **研究模型**：Ollama `qwen3.6:27b-q4_K_M`，8K 上下文、关闭思考模式、JSON Schema 结构化输出；按原文分块整理后分层合并，保存模型 digest 与来源指纹。
+- **检索模型**：`qwen3-embedding:0.6b`；英文正文分块向量与关键词结果融合。同一模型版本的索引才能参与检索，个人笔记即时参与关键词检索。
 
 首段上限 120 字符，后续每段上限 160 字符，单次最长 12,000 字符。分段缩短开始聆听的等待；模型首次加载、机器负载和文本长度仍会影响延迟，片段之间可能出现等待。
 
@@ -136,9 +158,11 @@ docs/                     产品设计、开发、分发与验收记录
 | 离线安装版模型与运行环境 | `PaperLingo.app/Contents/Resources/Runtime/` |
 | 离线安装版可写日志与缓存 | `~/Library/Application Support/PaperLingo/Engine/` |
 
-应用不调用在线翻译或在线 TTS；只有主动选择的文本发给本机模型，论文不会自动整篇提交。网页导入和模型安装会访问相应远程站点；没有内置云同步、用户账号或遥测服务。
+应用不调用云端推理。翻译和发音只处理主动选择的文本；只有手动点击整理或建立语义索引时，论文正文才会分段交给本机研究模型。首次打开研究库会在本机提取正文供关键词搜索，不会自动进行 AI 整理。网页导入和模型安装会访问相应远程站点；没有内置云同步、用户账号或遥测服务。
 
-迁移前先在两台电脑退出 app，再复制完整用户数据目录；可跳过 `Engine/` 缓存，存在的 SQLite `-wal` / `-shm` 辅助文件须一并保留。新机已有数据时先备份。JSON 导出不含 PDF 和完整复习日志，首版没有 JSON 导入。
+首次升级 v0.2 会先用 SQLite 在线备份 API 保存升级前的一致数据库到用户数据目录的 `Backups/`，再以事务新增档案、笔记、汇总和索引表。备份仅含数据库；完整迁移仍需复制论文文件。不要用旧版本长期交替打开同一数据目录。
+
+迁移前先在两台电脑退出 app，再复制完整用户数据目录；可跳过 `Engine/` 缓存，存在的 SQLite `-wal` / `-shm` 辅助文件须一并保留。新机已有数据时先备份。v0.2 JSON 导出包含词库、文献档案、个人笔记和最新汇总；不含 PDF、完整日志或可重建的向量，没有 JSON 导入。
 
 ## 开发与验证
 
@@ -179,5 +203,7 @@ bash scripts/build-app.sh
 | TranslateGemma 4B | [Google / Ollama](https://ollama.com/library/translategemma)，Gemma Terms of Use 与 Prohibited Use Policy |
 | Higgs Audio V2 tokenizer | Boson AI 社区许可，随 OmniVoice 快照分发 |
 | Ollama | [ollama/ollama](https://github.com/ollama/ollama)，MIT |
+| Qwen3.6 27B | [Qwen 官方模型卡](https://huggingface.co/Qwen/Qwen3.6-27B)，Apache-2.0；Ollama Q4_K_M |
+| Qwen3 Embedding 0.6B | [Qwen 官方模型卡](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B)，Apache-2.0 |
 
 详细归属、固定模型版本和随包许可见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 与 [packaging/third-party/](packaging/third-party/)。感谢上述项目的作者和维护者。

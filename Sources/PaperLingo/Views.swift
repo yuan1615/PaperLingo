@@ -43,6 +43,7 @@ struct RootView:View {
                 Group {
                     switch store.route {
                     case .reading: ReadingSpace(store:store)
+                    case .library: ResearchLibraryScreen(store:store)
                     case .vocabulary: VocabularyScreen(store:store)
                     case .review: ReviewScreen(store:store)
                     case .settings: SettingsScreen(store:store,engines:store.engines)
@@ -51,10 +52,19 @@ struct RootView:View {
             }.background(Palette.cream)
         }
         }
-        .overlay(alignment:.bottomTrailing) { AudioBar(audio:store.audio).padding(18) }
+        .overlay(alignment:.bottomTrailing) {
+            if store.researchBusy && store.route != .library {ResearchCompactStatus(store:store,audio:store.audio).padding(18)}
+            else {AudioBar(audio:store.audio).padding(18)}
+        }
         .onExitCommand { if layout.focused {layout.focused=false} }
         .foregroundStyle(Palette.ink).tint(Palette.green)
         .sheet(isPresented:$store.showLink) { LinkImport(store:store) }
+        .sheet(item:$store.noteEditor) {note in ResearchNoteEditor(store:store,note:note)}
+        .sheet(item:$store.metadataEditor) {paper in ResearchMetadataEditor(store:store,paper:paper)}
+        .confirmationDialog("移除论文和该论文的个人笔记？",isPresented:Binding(get:{store.pendingPaperDeletion != nil},set:{if !$0{store.pendingPaperDeletion=nil}}),titleVisibility:.visible) {
+            Button("移除论文、档案与笔记",role:.destructive) {if let paper=store.pendingPaperDeletion{store.deletePaper(paper)};store.pendingPaperDeletion=nil}
+            Button("取消",role:.cancel){store.pendingPaperDeletion=nil}
+        } message:{Text("本机论文副本、个人笔记、AI 汇总和检索索引会被移除。已积累的英语词条保留。可先导出 Markdown 保存笔记。")}
         .alert("需要留意",isPresented:Binding(get:{store.error != nil && !store.showLink},set:{if !$0 {store.error=nil}})) {
             Button("知道了",role:.cancel) { store.error=nil }
         } message:{ Text(store.error ?? "") }
@@ -80,6 +90,7 @@ struct Sidebar:View {
             }.padding(.top,42).padding(.bottom,35).padding(.horizontal,22)
             VStack(spacing:7) {
                 nav(.reading,icon:"doc.text.magnifyingglass",count:nil)
+                nav(.library,icon:"books.vertical",count:store.papers.count)
                 nav(.vocabulary,icon:"square.stack",count:store.words.count)
                 nav(.review,icon:"sun.max",count:store.dueWords.count)
             }.padding(.horizontal,13)
@@ -96,7 +107,8 @@ struct Sidebar:View {
                         }.buttonStyle(ReadingButtonStyle()).contextMenu {
                             Button("打开") { store.open(paper) }
                             Button("在 Finder 显示") { NSWorkspace.shared.activateFileViewerSelecting([store.fileURL(paper)]) }
-                            Button("移除论文",role:.destructive) { store.deletePaper(paper) }
+                            Button("论文档案与笔记") {store.showArchive(paper)}
+                            Button("移除论文…",role:.destructive) { store.pendingPaperDeletion=paper }
                         }
                     }
                     if store.papers.isEmpty { Text("导入你的第一篇论文，\n从一个陌生的词开始。").font(.system(size:11)).foregroundStyle(Palette.muted).lineSpacing(5).padding(.horizontal,10).padding(.top,3) }
@@ -191,6 +203,8 @@ struct DocumentPanel:View {
                 HStack(spacing:12) {
                     Text(paper.title).font(.system(size:17,weight:.medium,design:.serif)).lineLimit(1).textSelection(.enabled)
                     Spacer(minLength:0)
+                    Button {store.showArchive(paper)} label:{Image(systemName:"books.vertical")}.buttonStyle(ReadingButtonStyle()).help("论文档案与个人笔记")
+                    Button {store.newNote(paper,fromSelection:!store.selection.isEmpty)} label:{Image(systemName:"square.and.pencil")}.buttonStyle(ReadingButtonStyle()).help("记录想法；当前选区会附入笔记")
                     Menu { Button("导入 PDF…") {store.choosePDF()}; Button("导入链接…") {store.showLink=true}; Button("在 Finder 中显示") {NSWorkspace.shared.activateFileViewerSelecting([store.fileURL(paper)])} } label:{Image(systemName:"ellipsis").frame(width:32,height:32).contentShape(Rectangle())}.menuStyle(.borderlessButton).frame(width:32)
                 }.padding(.horizontal,20).frame(height:50)
                 controls
@@ -432,9 +446,9 @@ struct SettingsScreen:View {
                     Divider()
                     statusRow("发音 · OmniVoice",detail:engines.speechStatus,ready:engines.speechReady)
                     HStack(spacing:12) {
-                        Button {Task{await engines.start()}} label:{Label("启动本地引擎",systemImage:"play")}.buttonStyle(PrimaryButton()).disabled(engines.checking)
+                        Button {Task{await engines.start()}} label:{Label("启动本地引擎",systemImage:"play")}.buttonStyle(PrimaryButton()).disabled(engines.checking || store.researchBusy)
                         Button("检查连接"){Task{await engines.check()}}.buttonStyle(.bordered).disabled(engines.checking)
-                        Button("停止本应用启动的引擎"){engines.stop()}.buttonStyle(.bordered)
+                        Button("停止本应用启动的引擎"){store.stopLocalEngines()}.buttonStyle(.bordered)
                         Spacer()
                     }.padding(.top,6)
                     if let error=engines.error {Text(error).font(.system(size:11)).foregroundStyle(Palette.orange).textSelection(.enabled)}
@@ -452,6 +466,7 @@ struct SettingsScreen:View {
                     HStack {Text("英语口音").font(.system(size:12));Spacer();Picker("英语口音",selection:$voice){Text("美式英语").tag("american");Text("英式英语").tag("british")}.labelsHidden().frame(width:230)}
                     Button("试听一句英文"){store.audio.speak("A little reading, a little growth. Every day is a chance to learn something new.")}.buttonStyle(.bordered).font(.system(size:11))
                 }
+                ResearchModelSettings(engines:engines)
                 settingsCard("每日复习提醒",icon:"bell") {
                     HStack {
                         VStack(alignment:.leading,spacing:6) {Text("每天 10 分钟").font(.system(size:13,weight:.medium));Text("北京时间；点击系统通知进入练习。通知不自动播放声音材料。").font(.system(size:11)).foregroundStyle(Palette.muted)}
@@ -476,10 +491,10 @@ struct SettingsScreen:View {
                 settingsCard("你的资料",icon:"externaldrive") {
                     Text("论文副本、词库、查询与复习日志均保存在本机。").font(.system(size:12))
                     Text(store.dataURL.path).font(.system(size:10,design:.monospaced)).foregroundStyle(Palette.muted).textSelection(.enabled)
-                    HStack {Button("打开数据目录"){NSWorkspace.shared.open(store.dataURL)};Button("导出个人词库…"){store.exportBackup()}}.buttonStyle(.bordered).font(.system(size:11))
-                    Text("完整备份请复制整个数据目录；JSON 用于导出词条与来源元信息，当前版本尚不支持 JSON 导入。").font(.system(size:10)).foregroundStyle(Palette.muted)
+                    HStack {Button("打开数据目录"){NSWorkspace.shared.open(store.dataURL)};Button("导出词库、档案与笔记…"){store.exportBackup()}}.buttonStyle(.bordered).font(.system(size:11))
+                    Text("JSON 包含词条、档案、笔记与最新汇总，不含 PDF、完整日志或检索向量；完整备份请退出应用后复制整个数据目录。目前不支持 JSON 导入。").font(.system(size:10)).foregroundStyle(Palette.muted)
                 }
-                HStack {Text("PaperLingo 0.1 · macOS 原生应用");Spacer();Text("Keep reading. Keep growing.").font(.system(size:11,design:.serif))}.font(.system(size:10)).foregroundStyle(Palette.muted).padding(.bottom,10)
+                HStack {Text("PaperLingo 0.2 · macOS 原生应用");Spacer();Text("Keep reading. Keep growing.").font(.system(size:11,design:.serif))}.font(.system(size:10)).foregroundStyle(Palette.muted).padding(.bottom,10)
             }.padding(32).frame(maxWidth:980).frame(maxWidth:.infinity)
         }.task{await engines.check()}.onChange(of:hour){Task{await store.reminders.schedule(store.words)}}.onChange(of:minute){Task{await store.reminders.schedule(store.words)}}.onChange(of:speechProvider){store.audio.stop()}
     }

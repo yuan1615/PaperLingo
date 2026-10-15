@@ -1,0 +1,66 @@
+{
+  "checks": {
+    "ollama": {
+      "version": "0.40.4"
+    },
+    "translation_model": {
+      "name": "translategemma:4b",
+      "model": "translategemma:4b",
+      "modified_at": "2026-10-15T10:58:06.462415862+08:00",
+      "size": 3298875707,
+      "digest": "c49d986b0764f5881c476eb21435bb62b7abc62347aab3d4a6071e811be510a1",
+      "details": {
+        "parent_model": "",
+        "format": "gguf",
+        "family": "gemma3",
+        "families": [
+          "gemma3"
+        ],
+        "parameter_size": "4.3B",
+        "quantization_level": "Q4_K_M",
+        "context_length": 131072,
+        "embedding_length": 2560,
+        "runner": "ggml"
+      },
+      "capabilities": [
+        "completion",
+        "vision"
+      ]
+    },
+    "speech": {
+      "service": "paperlingo-omnivoice",
+      "protocol": 2,
+      "installed": true,
+      "loaded": false,
+      "busy": false,
+      "error": null
+    },
+    "translations": [
+      {
+        "text": "spurious correlations",
+        "translation": "虚假相关",
+        "seconds": 4.38
+      },
+      {
+        "text": "A robust representation should generalize beyond the training distribution.",
+        "translation": "一个健壮的表示方法应该能够推广到训练数据之外。",
+        "seconds": 0.56
+      }
+    ],
+    "audio": [
+      {
+        "text": "intelligibility",
+        "rate": 24000,
+        "duration": 1.45,
+        "seconds": 13.14
+      },
+      {
+        "text": "A little reading, a little growth.",
+        "rate": 24000,
+        "duration": 1.95,
+        "seconds": 0.01
+      }
+    ]
+  },
+  "passed": true
+}

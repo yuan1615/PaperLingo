@@ -4,10 +4,10 @@ import PDFKit
 import PaperCore
 import UniformTypeIdentifiers
 
-enum Route: String, CaseIterable { case reading = "阅读空间", vocabulary = "生词本", review = "今日练习", settings = "设置" }
+enum Route: String, CaseIterable { case reading = "阅读空间", library="研究库", vocabulary = "生词本", review = "今日练习", settings = "设置" }
 
 @MainActor final class AppStore: ObservableObject {
-    @Published var route: Route = .reading
+    @Published var route: Route = .library
     @Published var papers: [Paper] = []
     @Published var words: [Vocabulary] = []
     @Published var selectedPaperID: String?
@@ -27,8 +27,38 @@ enum Route: String, CaseIterable { case reading = "阅读空间", vocabulary = "
     @Published var revealed = false
     @Published var listening = false
     @Published var lookupSaved = false
+    @Published var records:[String:PaperRecord]=[:]
+    @Published var digests:[String:PaperDigest]=[:]
+    @Published var researchNotes:[PaperNote]=[]
+    @Published var textStatuses:[String:PaperTextStatus]=[:]
+    @Published var catalogPaperID:String?
+    @Published var noteEditor:PaperNote?
+    @Published var metadataEditor:Paper?
+    @Published var pendingPaperDeletion:Paper?
+    @Published var researchBusy=false
+    @Published var researchPaperID:String?
+    @Published var researchMessage=""
+    @Published var researchProgress=0.0
+    @Published var researchError:String?
+    @Published var extractingLibrary=false
+    @Published var libraryQuery=""
+    @Published var searchHits:[ResearchSearchHit]=[]
+    @Published var searching=false
+    @Published var searchMessage=""
+    @Published var libraryStatusFilter="全部状态"
+    @Published var libraryCategoryFilter="全部分类"
+    @Published var libraryTagFilter="全部标签"
+    @Published var libraryFavoritesOnly=false
+    @Published var librarySort="最近加入"
+    var researchTask:Task<Void,Never>?
+    var textIndexTask:Task<Void,Never>?
+    var searchTask:Task<Void,Never>?
+    var semanticSearchQuery:String?
+    var shuttingDown=false
+    var allowEngineRestore=true
+    let researchClient=ResearchClient()
     let dataURL: URL
-    private var db: Database?
+    var db: Database?
     private var selectionVersion = UUID()
     private var translatedPaper: Paper?
     private var translatedPage = 0
@@ -43,7 +73,10 @@ enum Route: String, CaseIterable { case reading = "阅读空间", vocabulary = "
     var currentCard: Vocabulary? { queue.indices.contains(reviewIndex) ? queue[reviewIndex] : nil }
     init() {
         let env = ProcessInfo.processInfo.environment["PAPERLINGO_DATA_DIR"]
-        dataURL = env.map { URL(fileURLWithPath: $0) } ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("PaperLingo")
+        let configURL=Bundle.main.url(forResource:"runtime",withExtension:"json")
+        let config=configURL.flatMap{try? Data(contentsOf:$0)}.flatMap{try? JSONSerialization.jsonObject(with:$0) as? [String:String]}
+        let directory=env ?? config?["data"]
+        dataURL = directory.map { URL(fileURLWithPath: $0) } ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("PaperLingo")
         do {
             try FileManager.default.createDirectory(at: dataURL.appendingPathComponent("Papers"), withIntermediateDirectories: true)
             db = try Database(url: dataURL.appendingPathComponent("library.sqlite"))
@@ -52,11 +85,16 @@ enum Route: String, CaseIterable { case reading = "阅读空间", vocabulary = "
             if selectedPaper == nil { selectedPaperID = papers.first?.id }
         } catch { self.error = error.localizedDescription }
     }
-    func reload() throws { guard let db else { throw AppError.message("数据库未打开，请检查数据目录权限。") }; papers=try db.papers(); words=try db.vocabulary(); reviewedToday=try db.reviewsToday() }
+    func reload() throws {
+        guard let db else { throw AppError.message("数据库未打开，请检查数据目录权限。") }
+        papers=try db.papers();words=try db.vocabulary();reviewedToday=try db.reviewsToday()
+        records=try db.paperRecords();digests=try db.latestDigests();researchNotes=try db.allNotes();textStatuses=try db.textStatuses()
+    }
     func open(_ paper: Paper, page: Int? = nil) {
         audio.stop(); selectedPaperID=paper.id; route = .reading; clearSelection()
         jumpPage=page ?? paper.page; selectedPage=page ?? paper.page
         UserDefaults.standard.set(paper.id, forKey: "lastPaperID")
+        do {try db?.markPaperOpened(paper.id);records[paper.id]=try db?.paperRecord(paper.id)} catch {self.error=error.localizedDescription}
     }
     func fileURL(_ paper: Paper) -> URL { dataURL.appendingPathComponent("Papers").appendingPathComponent(paper.filename) }
     func choosePDF() {
@@ -116,6 +154,7 @@ enum Route: String, CaseIterable { case reading = "阅读空间", vocabulary = "
     func clearSelection() { selectionVersion=UUID(); selection=""; context=""; translation=""; lookupSaved=false }
     func translate() async {
         guard !translating, !selection.isEmpty else { return }
+        guard !researchBusy else {toast="本地大模型正在整理论文；完成或取消后即可翻译。阅读、笔记和关键词检索仍可使用。";return}
         guard selection.count<=4000 else { error="一次最多翻译 4000 字符，请选取一个单词、短语或段落。"; return }
         translating=true; defer { translating=false }
         let text=selection, token=selectionVersion, paper=selectedPaper, page=selectedPage, surrounding=context
@@ -140,7 +179,8 @@ enum Route: String, CaseIterable { case reading = "阅读空间", vocabulary = "
         do { try db?.updatePage(id,page:page); papers[index].page=page } catch { self.error=error.localizedDescription }
     }
     func deletePaper(_ p: Paper) {
-        do { try db?.deletePaper(p.id); try reload(); try? FileManager.default.removeItem(at:fileURL(p)); if selectedPaperID==p.id { selectedPaperID=papers.first?.id; clearSelection() } }
+        guard researchPaperID != p.id else {error="请先取消这篇论文的整理任务，再移除论文。";return}
+        do { try db?.deletePaper(p.id); try reload(); try? FileManager.default.removeItem(at:fileURL(p)); if selectedPaperID==p.id { selectedPaperID=papers.first?.id; clearSelection() };if catalogPaperID==p.id {catalogPaperID=nil};searchHits.removeAll{$0.paperID==p.id} }
         catch { self.error=error.localizedDescription }
     }
     func deleteWord(_ word: Vocabulary) {
@@ -158,10 +198,14 @@ enum Route: String, CaseIterable { case reading = "阅读空间", vocabulary = "
         let panel=NSSavePanel(); panel.allowedContentTypes=[.json]; panel.nameFieldStringValue="PaperLingo-backup.json"
         guard panel.runModal() == .OK, let url=panel.url else { return }
         do {
-            struct Backup: Codable { var version=1; var exported=Date(); var papers:[Paper]; var vocabulary:[Vocabulary] }
+            struct Backup: Codable {
+                var version=2;var exported=Date()
+                var papers:[Paper];var vocabulary:[Vocabulary]
+                var records:[PaperRecord];var notes:[PaperNote];var digests:[PaperDigest]
+            }
             let encoder=JSONEncoder(); encoder.outputFormatting=[.prettyPrinted,.sortedKeys]; encoder.dateEncodingStrategy = .iso8601
-            try encoder.encode(Backup(papers:papers,vocabulary:words)).write(to:url,options:.atomic)
-            toast="词库已导出。论文原文件可在数据目录中备份。"
+            try encoder.encode(Backup(papers:papers,vocabulary:words,records:papers.map{record(for:$0)},notes:researchNotes,digests:Array(digests.values))).write(to:url,options:.atomic)
+            toast="词库、论文档案和笔记已导出。PDF 与完整日志仍需备份数据目录。"
         } catch { self.error=error.localizedDescription }
     }
     func loadExample() {

@@ -1,9 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-STAGE="$PROJECT_ROOT/dist/PaperLingo-0.1.0-Offline"
+VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PROJECT_ROOT/packaging/Info.plist")
+STAGE="$PROJECT_ROOT/dist/PaperLingo-$VERSION-Offline"
 APP_DIR="$STAGE/PaperLingo.app"
-DMG="$PROJECT_ROOT/dist/PaperLingo-0.1.0-macOS-arm64-offline.dmg"
+DMG="$PROJECT_ROOT/dist/PaperLingo-$VERSION-macOS-arm64-offline.dmg"
 cd "$PROJECT_ROOT"
 if [ "$(uname -m)" != arm64 ]; then echo 'Build this offline distribution on Apple Silicon.'; exit 1; fi
 if [ "${PAPERLINGO_IMAGE_ONLY:-0}" != 1 ]; then
@@ -22,6 +23,16 @@ fi
 if [ "${PAPERLINGO_STAGE_ONLY:-0}" = 1 ]; then echo "Staged: $APP_DIR"; exit 0; fi
 test -f "$APP_DIR/Contents/Resources/distribution.json"
 codesign --verify --deep --strict "$APP_DIR"
-hdiutil create -volname 'PaperLingo 0.1.0 Offline' -srcfolder "$STAGE" -ov -format UDZO -imagekey zlib-level=1 "$DMG"
+# Leave room for the image and hdiutil's temporary work before compressing.
+python3 - "$STAGE" <<'PY'
+from pathlib import Path
+import shutil,sys
+stage=Path(sys.argv[1])
+size=sum(p.stat().st_size for p in stage.rglob('*') if p.is_file())
+needed=2*size+2*1024**3
+if shutil.disk_usage(stage).free<needed:
+    raise SystemExit(f'DMG creation needs at least {needed/1024**3:.1f} GiB free; staged app preserved.')
+PY
+hdiutil create -volname "PaperLingo $VERSION Offline" -srcfolder "$STAGE" -ov -format UDZO -imagekey zlib-level=1 "$DMG"
 (cd "$PROJECT_ROOT/dist" && shasum -a 256 "$(basename "$DMG")" > "$(basename "$DMG").sha256")
 echo "Built offline image: $DMG"

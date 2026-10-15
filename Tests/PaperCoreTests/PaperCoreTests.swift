@@ -1,5 +1,6 @@
 import Foundation
 import PaperCore
+import CSQLite
 
 // Standalone assertions keep the checks runnable with Command Line Tools, without full Xcode/XCTest.
 var failures=0
@@ -157,6 +158,109 @@ final class PaperCoreTests {
     }
 }
 
+extension PaperCoreTests {
+    func testLegacyMigrationBacksUpWALAndPreservesLearning() throws {
+        let dir=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true)
+        defer {try? FileManager.default.removeItem(at:dir)}
+        let url=dir.appendingPathComponent("legacy.sqlite")
+        var old:OpaquePointer?
+        sqlite3_open(url.path,&old);defer {sqlite3_close(old)}
+        let sql="""
+        PRAGMA journal_mode=WAL;
+        CREATE TABLE papers(id TEXT PRIMARY KEY,title TEXT NOT NULL,filename TEXT NOT NULL,kind TEXT NOT NULL,source TEXT NOT NULL,added REAL NOT NULL,page INTEGER NOT NULL DEFAULT 0);
+        INSERT INTO papers VALUES('legacy','Original paper','old.pdf','PDF','https://example.org',1700000000,4);
+        PRAGMA user_version=1;
+        """
+        XCTAssertEqual(sqlite3_exec(old,sql,nil,nil,nil),SQLITE_OK)
+        let db=try Database(url:url)
+        XCTAssertEqual(try db.papers().first?.title,"Original paper")
+        XCTAssertEqual(try db.papers().first?.page,4)
+        XCTAssertTrue(db.migrationBackupURL != nil)
+        var backup:OpaquePointer?
+        sqlite3_open(db.migrationBackupURL!.path,&backup);defer{sqlite3_close(backup)}
+        var statement:OpaquePointer?
+        sqlite3_prepare_v2(backup,"SELECT title FROM papers WHERE id='legacy'",-1,&statement,nil);defer{sqlite3_finalize(statement)}
+        XCTAssertEqual(sqlite3_step(statement),SQLITE_ROW)
+        XCTAssertEqual(String(cString:sqlite3_column_text(statement,0)),"Original paper")
+        try db.record(text:"latent",translation:"潜在的",context:"",paper:try db.papers().first,page:4)
+        let reopened=try Database(url:url)
+        XCTAssertTrue(reopened.migrationBackupURL == nil)
+        XCTAssertEqual(try reopened.vocabulary().first?.text,"latent")
+    }
+    func testResearchRecordNotesAndKeywordPersistence() throws {
+        let (db,dir)=try database();defer{try? FileManager.default.removeItem(at:dir)}
+        let paper=Paper(title:"Speech synthesis",filename:"test.pdf",kind:"PDF")
+        try db.addPaper(paper)
+        var record=PaperRecord(paperID:paper.id)
+        record.authors="A. Researcher";record.category="语音合成";record.tags=ResearchText.tags("TTS, audio，TTS");record.status = .read;record.favorite=true
+        try db.savePaperRecord(record,title:"Better speech synthesis")
+        let note=PaperNote(paperID:paper.id,title:"研究疑问",body:"如何降低长句合成延迟？",kind:.question,quote:"The system reduces latency.",page:2)
+        try db.saveNote(note)
+        XCTAssertEqual(try db.keywordSearch("长句").first?.paperID,paper.id)
+        XCTAssertEqual(try db.keywordSearch("长句").first?.source,"笔记")
+        XCTAssertEqual(try db.keywordSearch("语音").first?.paperID,paper.id)
+        XCTAssertEqual(try db.keywordSearch("synthesis").first?.paperID,paper.id)
+        let reopened=try Database(url:dir.appendingPathComponent("test.sqlite"))
+        XCTAssertEqual(try reopened.paperRecord(paper.id),record)
+        XCTAssertEqual(try reopened.notes(paperID:paper.id).first?.id,note.id)
+        try reopened.deleteNote(note)
+        XCTAssertTrue(try reopened.keywordSearch("长句").isEmpty)
+        XCTAssertEqual(try reopened.papers().first?.title,"Better speech synthesis")
+    }
+    func testChunkReplacementKeepsOnlyMatchingVectorsAndCascades() throws {
+        let (db,dir)=try database();defer{try? FileManager.default.removeItem(at:dir)}
+        let paper=Paper(title:"Audio",filename:"test.pdf",kind:"PDF");try db.addPaper(paper)
+        let chunks=ResearchText.chunks(paperID:paper.id,pages:["Low latency synthesis with a robust model.","A second page contains alignment."])
+        try db.replaceChunks(paperID:paper.id,chunks:chunks)
+        var embedded=chunks[0];embedded.vector=[1,0,0]
+        try db.saveVectors([embedded],model:"test-model")
+        try db.replaceChunks(paperID:paper.id,chunks:chunks)
+        XCTAssertEqual(try db.chunks(paperID:paper.id).first?.vector,[1,0,0])
+        XCTAssertEqual(try db.keywordSearch("alignment").first?.page,1)
+        let changed=ResearchText.chunks(paperID:paper.id,pages:["A completely different article."])
+        try db.replaceChunks(paperID:paper.id,chunks:changed)
+        XCTAssertTrue(try db.chunks(paperID:paper.id).first?.vector.isEmpty == true)
+        XCTAssertTrue(try db.keywordSearch("alignment").isEmpty)
+        try db.saveNote(PaperNote(paperID:paper.id,body:"personal thoughts"))
+        try db.record(text:"latent",translation:"潜在的",context:"",paper:paper,page:0)
+        try db.deletePaper(paper.id)
+        XCTAssertTrue(try db.chunks().isEmpty)
+        XCTAssertTrue(try db.allNotes().isEmpty)
+        XCTAssertTrue(try db.keywordSearch("Audio").isEmpty)
+        XCTAssertEqual(try db.vocabulary().count,1)
+    }
+    func testGroundingRejectsInventedQuotesAndUsesActualPage() throws {
+        let chunks=ResearchText.chunks(paperID:"p",pages:["", "The proposed method reduces synthesis latency without extra training."])
+        let object:[String:Any]=["title":"Paper","authors":[],"year":"","venue":"","doi":"","arxiv":"","category":"语音","tags":["TTS"],"oneLine":"降低延迟", "points":[
+            ["topic":"method","text":"降低合成延迟。","chunkID":chunks[0].id,"quote":"The proposed method reduces synthesis latency without extra training."],
+            ["topic":"results","text":"不存在的性能提升","chunkID":chunks[0].id,"quote":"The proposed system improves quality by 90 percent."],
+            ["topic":"results","text":"假页码","chunkID":"not-a-source","quote":"The proposed method reduces synthesis latency without extra training."]]]
+        let draft=try JSONDecoder().decode(DigestDraft.self,from:JSONSerialization.data(withJSONObject:object))
+        let digest=draft.grounded(in:chunks,paperID:"p",model:"test",sourceHash:"hash",totalPages:2)
+        XCTAssertEqual(digest.points.count,1);XCTAssertEqual(digest.rejectedEvidence,2)
+        XCTAssertEqual(digest.points[0].page,1);XCTAssertEqual(digest.processedPages,1)
+        let (db,dir)=try database();defer{try? FileManager.default.removeItem(at:dir)}
+        let paper=Paper(id:"p",title:"Test paper",filename:"test.pdf",kind:"PDF");try db.addPaper(paper)
+        try db.saveDigest(digest)
+        try db.saveNote(PaperNote(paperID:"p",title:"My note",body:"Keep original thought"))
+        let markdown=try db.exportPaperMarkdown(paper)
+        XCTAssertTrue(markdown.contains("第 2 页"));XCTAssertTrue(markdown.contains("Keep original thought"))
+        XCTAssertEqual(try db.latestDigests()["p"]?.points.count,1)
+    }
+    func testSemanticRankingRejectsWrongModelAndInvalidVectors() {
+        var a=PaperTextChunk(paperID:"a",page:1,ordinal:0,text:"Matching text",vector:[1,0],vectorModel:"v1")
+        let b=PaperTextChunk(paperID:"b",page:0,ordinal:0,text:"Other",vector:[0,1],vectorModel:"v1")
+        let stale=PaperTextChunk(paperID:"c",page:0,ordinal:0,text:"Old",vector:[1,0],vectorModel:"v0")
+        let ranked=ResearchText.semanticHits(query:[1,0],chunks:[b,stale,a],model:"v1")
+        XCTAssertEqual(ranked.map(\.paperID),["a","b"])
+        XCTAssertEqual(ranked.first?.page,1)
+        a.vector=[.nan,1]
+        XCTAssertTrue(ResearchText.semanticHits(query:[1,0],chunks:[a],model:"v1").isEmpty)
+        XCTAssertTrue(ResearchText.cosine([1],[1,0]) == nil)
+    }
+}
+
 let suite=PaperCoreTests()
 let checks:[(String,() throws -> Void)] = [
     ("PDF normalization",suite.testPDFNormalizationAndClassification),
@@ -171,7 +275,12 @@ let checks:[(String,() throws -> Void)] = [
     ("Persistence and removed sources",suite.testPersistenceAndSourceRemovalPreservesWords),
     ("Stage bounds and daily cap",suite.testStageBoundsAndDailyCap),
     ("Web article extraction",suite.testWebImportExtractsReadableArticle),
-    ("Saved sentence lookup frequency",suite.testLookupOfSavedSentenceIncrementsFrequency)
+    ("Saved sentence lookup frequency",suite.testLookupOfSavedSentenceIncrementsFrequency),
+    ("Legacy WAL migration and backup",suite.testLegacyMigrationBacksUpWALAndPreservesLearning),
+    ("Research record and notes persistence",suite.testResearchRecordNotesAndKeywordPersistence),
+    ("Chunks, vectors and cascading cleanup",suite.testChunkReplacementKeepsOnlyMatchingVectorsAndCascades),
+    ("Grounded digest and Markdown export",suite.testGroundingRejectsInventedQuotesAndUsesActualPage),
+    ("Semantic model and vector integrity",suite.testSemanticRankingRejectsWrongModelAndInvalidVectors)
 ]
 for (name,run) in checks {
     let before=failures

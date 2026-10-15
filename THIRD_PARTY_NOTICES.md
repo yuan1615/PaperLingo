@@ -26,6 +26,13 @@ Gemma is provided under and subject to the Gemma Terms of Use found at ai.google
 
 The OmniVoice snapshot contains Boson AI's Higgs Audio V2 tokenizer. Its community license and the upstream README are preserved as [Higgs-Audio-Tokenizer-LICENSE.txt](packaging/third-party/Higgs-Audio-Tokenizer-LICENSE.txt) and [Higgs-Audio-Tokenizer-README.md](packaging/third-party/Higgs-Audio-Tokenizer-README.md), including referenced upstream model terms.
 
+## Qwen research models (v0.2)
+
+- Qwen3.6 27B: Alibaba Cloud / Qwen, [official model card](https://huggingface.co/Qwen/Qwen3.6-27B); distributed by Ollama as `qwen3.6:27b-q4_K_M`.
+- Qwen3 Embedding 0.6B: Qwen, [official model card](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B); Ollama `qwen3-embedding:0.6b`.
+- Both upstream models use Apache-2.0. License copies: [Qwen3.6](packaging/third-party/Qwen3.6-27B-LICENSE.txt), [Qwen3 Embedding](packaging/third-party/Qwen3-Embedding-0.6B-LICENSE.txt).
+- Tags are mutable. Installation records actual model metadata/digests; offline distribution records the SHA-256 of every included weight. PaperLingo does not alter weights; its prompts, context limits and local indexing are application configuration.
+
 ## Ollama, Python and runtime dependencies
 
 - Ollama 0.40.4: MIT; [license copy](packaging/third-party/Ollama-LICENSE.txt).

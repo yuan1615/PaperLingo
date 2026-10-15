@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import plistlib
 import shutil
 import sys
 
@@ -13,6 +14,26 @@ DEST=RESOURCES/'Runtime'
 SOURCE=ROOT/'.runtime'
 REVISION='c5fdb5ccb189668d56333f77ba2629f4cd7535f4'
 IGNORE=shutil.ignore_patterns('__pycache__','*.pyc','.DS_Store')
+VERSION=plistlib.loads((APP/'Contents/Info.plist').read_bytes())['CFBundleShortVersionString']
+RESEARCH_MODELS=('qwen3.6:27b-q4_K_M','qwen3-embedding:0.6b')
+
+def model_files(name):
+    repository,tag=name.rsplit(':',1)
+    manifest=SOURCE/'ollama-models/manifests/registry.ollama.ai/library'/repository/tag
+    data=json.loads(manifest.read_text())
+    blobs=[]
+    for layer in [data['config'],*data['layers']]:
+        digest=layer['digest']
+        if not digest.startswith('sha256:') or len(digest)!=71:
+            raise SystemExit(f'Unexpected model digest: {name}')
+        blob=SOURCE/'ollama-models/blobs'/digest.replace(':','-')
+        if not blob.is_file() or blob.stat().st_size!=layer['size']:
+            raise SystemExit(f'Missing or incomplete model: {name}: {blob.name}')
+        blobs.append(blob)
+    return manifest,blobs
+
+def tree_size(path):
+    return sum(p.stat().st_size for p in path.rglob('*') if p.is_file())
 
 def copy(source,target,links=True):
     print(f'Packaging {target.relative_to(APP)}',flush=True)
@@ -22,7 +43,26 @@ if DEST.exists():
     raise SystemExit('Runtime already staged. Use a fresh app output directory for a reproducible package.')
 ready=json.loads((SOURCE/'models.ready').read_text())
 if ready.get('revision') != REVISION:
-    raise SystemExit('OmniVoice snapshot differs from the verified v0.1.0 version. Run scripts/setup-local.sh first.')
+    raise SystemExit('OmniVoice snapshot differs from the verified version. Run scripts/setup-local.sh first.')
+# Package only manifests and blobs required by this version. Partial downloads,
+# unrelated Ollama models and writable caches must never enter the app bundle.
+required_models=['translategemma:4b',*RESEARCH_MODELS]
+research_ready=json.loads((SOURCE/'research-models.ready').read_text())
+if not all(name in {m.get('name') for m in research_ready} for name in RESEARCH_MODELS):
+    raise SystemExit('Research models are not ready. Run engine/install_research.py first.')
+manifests=[]
+blobs=set()
+for name in required_models:
+    manifest,files=model_files(name)
+    manifests.append(manifest)
+    blobs.update(files)
+snapshot=SOURCE/f'huggingface/hub/models--k2-fsa--OmniVoice/snapshots/{REVISION}'
+required_space=(tree_size(SOURCE/'python/cpython-3.11.17-macos-aarch64-none')+
+                tree_size(SOURCE/'venv/lib/python3.11/site-packages')+
+                tree_size(SOURCE/'ollama')+tree_size(snapshot)+
+                sum(p.stat().st_size for p in blobs)+2*1024**3)
+if shutil.disk_usage(APP).free < required_space:
+    raise SystemExit(f'Offline staging needs at least {required_space/1024**3:.1f} GiB free; no runtime copied.')
 DEST.mkdir()
 copy(SOURCE/'python/cpython-3.11.17-macos-aarch64-none',DEST/'python')
 # Flatten the venv into embedded Python: no pyvenv.cfg, absolute shebangs, uv,
@@ -41,12 +81,15 @@ for name in ('python','python3'):
 copy(SOURCE/'ollama',DEST/'ollama')
 (DEST/'bin').mkdir()
 (DEST/'bin/ollama').symlink_to('../ollama/ollama')
-copy(SOURCE/'ollama-models/blobs',DEST/'ollama-models/blobs')
-copy(SOURCE/'ollama-models/manifests',DEST/'ollama-models/manifests')
+for file in [*manifests,*sorted(blobs)]:
+    target=DEST/'ollama-models'/file.relative_to(SOURCE/'ollama-models')
+    target.parent.mkdir(parents=True,exist_ok=True)
+    shutil.copy2(file,target)
 # Dereference HF cache links: the app contains one independent, full snapshot.
-copy(SOURCE/f'huggingface/hub/models--k2-fsa--OmniVoice/snapshots/{REVISION}',DEST/'models/OmniVoice',links=False)
+copy(snapshot,DEST/'models/OmniVoice',links=False)
 (DEST/'models.ready').write_text(json.dumps({'omnivoice':'models/OmniVoice','revision':REVISION}))
-(RESOURCES/'runtime.json').write_text(json.dumps({'runtime':'bundled','version':'0.1.0'}))
+(DEST/'research-models.ready').write_text(json.dumps(research_ready))
+(RESOURCES/'runtime.json').write_text(json.dumps({'runtime':'bundled','version':VERSION}))
 copy(ROOT/'packaging/third-party',RESOURCES/'ThirdParty')
 shutil.copy2(ROOT/'packaging/INSTALL-zh.txt',RESOURCES/'安装说明.txt')
 shutil.copy2(ROOT/'engine/verify_portable.py',RESOURCES/'engine/verify_portable.py')
@@ -56,8 +99,8 @@ for file in DEST.rglob('*'):
         target=os.readlink(file)
         if os.path.isabs(target) or not file.resolve().is_relative_to(DEST):
             raise RuntimeError(f'Nonportable symlink: {file}: {target}')
-manifest={'version':'0.1.0','architecture':'arm64','minimum_macos':'14.0','minimum_ram_gb':16,
-          'omnivoice_revision':REVISION,'components':{'python':'3.11.17','omnivoice':'0.2.1','torch':'2.8.0','ollama':'0.40.4','translation':'translategemma:4b'},'files':{}}
+manifest={'version':VERSION,'architecture':'arm64','minimum_macos':'14.0','minimum_ram_gb':32,
+          'omnivoice_revision':REVISION,'components':{'python':'3.11.17','omnivoice':'0.2.1','torch':'2.8.0','ollama':'0.40.4','translation':'translategemma:4b','research':RESEARCH_MODELS[0],'embedding':RESEARCH_MODELS[1]},'files':{}}
 for file in sorted(DEST.rglob('*')):
     if file.is_file() and not file.is_symlink():
         if file.suffix=='.safetensors' or (file.parent.name=='blobs' and file.name.startswith('sha256-')):

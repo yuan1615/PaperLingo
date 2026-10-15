@@ -7,26 +7,42 @@ public enum StorageError: LocalizedError {
 }
 
 public final class Database {
-    private var handle: OpaquePointer?
-    private let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+    var handle: OpaquePointer?
+    let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+    public private(set) var migrationBackupURL: URL?
     public init(url: URL) throws {
+        let existed = FileManager.default.fileExists(atPath:url.path)
         guard sqlite3_open(url.path, &handle) == SQLITE_OK else { throw StorageError.sqlite("无法打开数据库") }
+        sqlite3_busy_timeout(handle, 5000)
+        let version = try rows("PRAGMA user_version") { Int(sqlite3_column_int($0,0)) }.first ?? 0
+        guard version <= 2 else { throw StorageError.sqlite("数据库由更新版本创建，请使用新版 PaperLingo。") }
+        if existed && version < 2 {
+            let directory=url.deletingLastPathComponent().appendingPathComponent("Backups")
+            try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:true)
+            let target=directory.appendingPathComponent("library-before-v0.2-\(UUID().uuidString).sqlite")
+            try backup(to:target)
+            migrationBackupURL=target
+        }
         try exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
+        try exec("BEGIN IMMEDIATE")
+        do {
         try exec("""
         CREATE TABLE IF NOT EXISTS papers(id TEXT PRIMARY KEY,title TEXT NOT NULL,filename TEXT NOT NULL,kind TEXT NOT NULL,source TEXT NOT NULL,added REAL NOT NULL,page INTEGER NOT NULL DEFAULT 0);
         CREATE TABLE IF NOT EXISTS vocabulary(id TEXT PRIMARY KEY,normalized TEXT UNIQUE NOT NULL,text TEXT NOT NULL,translation TEXT NOT NULL,kind TEXT NOT NULL,context TEXT NOT NULL,paper_id TEXT NOT NULL,paper_title TEXT NOT NULL,page INTEGER NOT NULL,lookups INTEGER NOT NULL,lapses INTEGER NOT NULL,stage INTEGER NOT NULL,due REAL NOT NULL,created REAL NOT NULL,last_seen REAL NOT NULL);
         CREATE TABLE IF NOT EXISTS lookups(id INTEGER PRIMARY KEY,word_id TEXT,paper_id TEXT,text TEXT,context TEXT,page INTEGER,created REAL);
         CREATE TABLE IF NOT EXISTS reviews(id INTEGER PRIMARY KEY,word_id TEXT,grade TEXT,mode TEXT,created REAL,next_due REAL);
         CREATE INDEX IF NOT EXISTS vocabulary_due ON vocabulary(due);
-        PRAGMA user_version=1;
         """)
+        try migrateResearchSchema()
+        try exec("PRAGMA user_version=2; COMMIT;")
+        } catch { try? exec("ROLLBACK"); throw error }
     }
     deinit { sqlite3_close(handle) }
-    private func exec(_ sql: String) throws {
+    func exec(_ sql: String) throws {
         guard sqlite3_exec(handle, sql, nil, nil, nil) == SQLITE_OK else { throw failure() }
     }
-    private func failure() -> StorageError { .sqlite(String(cString: sqlite3_errmsg(handle))) }
-    private func statement(_ sql: String, _ values: [Any] = []) throws -> OpaquePointer {
+    func failure() -> StorageError { .sqlite(String(cString: sqlite3_errmsg(handle))) }
+    func statement(_ sql: String, _ values: [Any] = []) throws -> OpaquePointer {
         var result: OpaquePointer?
         guard sqlite3_prepare_v2(handle, sql, -1, &result, nil) == SQLITE_OK, let result else { throw failure() }
         for (i, value) in values.enumerated() {
@@ -38,11 +54,11 @@ public final class Database {
         }
         return result
     }
-    private func write(_ sql: String, _ values: [Any] = []) throws {
+    func write(_ sql: String, _ values: [Any] = []) throws {
         let s = try statement(sql, values); defer { sqlite3_finalize(s) }
         guard sqlite3_step(s) == SQLITE_DONE else { throw failure() }
     }
-    private func rows<T>(_ sql: String, _ values: [Any] = [], map: (OpaquePointer) -> T) throws -> [T] {
+    func rows<T>(_ sql: String, _ values: [Any] = [], map: (OpaquePointer) -> T) throws -> [T] {
         let s = try statement(sql, values); defer { sqlite3_finalize(s) }
         var result: [T] = []
         while true {
@@ -52,18 +68,29 @@ public final class Database {
             result.append(map(s))
         }
     }
-    private func text(_ s: OpaquePointer, _ index: Int32) -> String { sqlite3_column_text(s,index).map { String(cString: $0) } ?? "" }
-    private func date(_ s: OpaquePointer, _ index: Int32) -> Date { Date(timeIntervalSince1970: sqlite3_column_double(s,index)) }
+    func text(_ s: OpaquePointer, _ index: Int32) -> String { sqlite3_column_text(s,index).map { String(cString: $0) } ?? "" }
+    func date(_ s: OpaquePointer, _ index: Int32) -> Date { Date(timeIntervalSince1970: sqlite3_column_double(s,index)) }
     public func papers() throws -> [Paper] {
         try rows("SELECT id,title,filename,kind,source,added,page FROM papers ORDER BY added DESC") { s in
             Paper(id: text(s,0), title: text(s,1), filename: text(s,2), kind: text(s,3), source: text(s,4), added: date(s,5), page: Int(sqlite3_column_int(s,6)))
         }
     }
     public func addPaper(_ p: Paper) throws {
-        try write("INSERT INTO papers VALUES(?,?,?,?,?,?,?)", [p.id,p.title,p.filename,p.kind,p.source,p.added.timeIntervalSince1970,p.page])
+        try exec("BEGIN IMMEDIATE")
+        do {
+            try write("INSERT INTO papers VALUES(?,?,?,?,?,?,?)", [p.id,p.title,p.filename,p.kind,p.source,p.added.timeIntervalSince1970,p.page])
+            try refreshPaperSearch(p.id);try exec("COMMIT")
+        } catch {try? exec("ROLLBACK");throw error}
     }
     public func updatePage(_ id: String, page: Int) throws { try write("UPDATE papers SET page=? WHERE id=?", [page,id]) }
-    public func deletePaper(_ id: String) throws { try write("DELETE FROM papers WHERE id=?", [id]) }
+    public func deletePaper(_ id: String) throws {
+        try exec("BEGIN IMMEDIATE")
+        do {
+            try write("DELETE FROM paper_search WHERE paper_id=?",[id])
+            try write("DELETE FROM papers WHERE id=?",[id])
+            try exec("COMMIT")
+        } catch {try? exec("ROLLBACK");throw error}
+    }
     public func vocabulary() throws -> [Vocabulary] {
         try rows("SELECT id,text,translation,kind,context,paper_id,paper_title,page,lookups,lapses,stage,due,created,last_seen FROM vocabulary ORDER BY last_seen DESC") { s in
             Vocabulary(id: text(s,0), text: text(s,1), translation: text(s,2), kind: text(s,3), context: text(s,4), paperID: text(s,5), paperTitle: text(s,6), page: Int(sqlite3_column_int(s,7)), lookups: Int(sqlite3_column_int(s,8)), lapses: Int(sqlite3_column_int(s,9)), stage: Int(sqlite3_column_int(s,10)), due: date(s,11), created: date(s,12), lastSeen: date(s,13))

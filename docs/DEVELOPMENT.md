@@ -29,6 +29,14 @@ bash scripts/setup-local.sh
 
 安装使用 `127.0.0.1:11434`。如已有另一个 Ollama 服务，请先退出以避免模型被下载到其他实例的目录。下载中断可重新执行脚本。
 
+### v0.2 研究模型
+
+完成基础安装后运行 `python3 engine/install_research.py`，或双击 `安装研究模型.command`。它用独立的 `127.0.0.1:11435` 服务下载 `qwen3.6:27b-q4_K_M` 与 `qwen3-embedding:0.6b` 到同一项目模型目录，不操作系统 Ollama。新增下载约 18.1 GB，建议 32 GB 统一内存。
+
+安装器会预检余量、通过文件锁防止重复安装、重试短暂断线，并交由 Ollama 校验完整 blob。Ollama 0.40.x 可能在异常退出后留下空的分段元数据；重新安装时仅对已知的下载分段几何恢复安全前缀，最终完整哈希仍必须通过。恢复大型权重时，会把过大的范围细分为 100 MB 的原生分段，保留安全的已写前缀，降低末段拖尾；旧分段元数据另外保存在安装日志目录。不要在安装进行中手动改写 partial 文件。进度写入 `.runtime/logs/research-progress.json`，完成后保存实际模型 digest 到 `.runtime/research-models.ready`。
+
+应用内推理使用 `11434`。Ollama 只允许一个已加载模型和一个并行请求；整理时停下 app 自己创建的 OmniVoice 进程，随后恢复。不会停止外部进程。模型按需加载，研究任务结束后卸载；系统语音仍可使用。
+
 ## 检查与真实模型验证
 
 ### 不下载模型的回归检查
@@ -51,6 +59,18 @@ python3 engine/benchmark_stream.py
 ```
 
 前者验证中文翻译、24 kHz PCM WAV 与非静音输出；后者比较首段返回时间、总生成时间和整段接口。结果分别保存到 `.runtime/logs/smoke-test.json` 与 `.runtime/logs/stream-benchmark.json`。这些工具会连接本机模型并消耗推理资源。
+
+研究模型就绪后可用原生客户端验证结构化输出、原文摘录匹配及跨语言检索：
+
+```bash
+swift run --disable-sandbox PaperResearchSmoke --work .test-output/research-smoke
+# 只检查已安装的检索模型
+swift run --disable-sandbox PaperResearchSmoke --embedding-only --work .test-output/embedding-smoke
+# 可选：只取一份测试 PDF 的前三个片段，不代表全文汇总验收
+swift run --disable-sandbox PaperResearchSmoke --source /absolute/path/to/test-paper.pdf --work .test-output/paper-smoke
+```
+
+默认素材明确为合成测试片段；工具不写入学习数据库。结果含实际耗时、模型名、向量维度、相似度和匹配后的汇总。全文 UI 验收需另行执行，不能把此诊断当成学术质量评测。
 
 离线 app 的搬迁 / 权重验证使用其内置 Python，命令见分发指南。已有实际结果与范围见 [VERIFICATION.md](VERIFICATION.md)。
 
@@ -79,6 +99,8 @@ PAPERLINGO_DATA_DIR="$(mktemp -d /tmp/paperlingo-dev.XXXXXX)" \
 
 这会隔离数据库，但用户偏好和系统通知仍使用同一 bundle 身份；不要把它当作完整的第二套用户账户。
 
+原生 UI 验收可另外构建不同 bundle identifier 的 QA app，并在其 `Contents/Resources/runtime.json` 中指定绝对 `data` 路径。此字段只用于隔离本地验收，正式构建脚本不会写入；不要把 QA bundle 覆盖用户安装版。
+
 ## 模块与约定
 
 - `Sources/PaperCore/`：保持无 UI 的文本、存储、复习和运行时路径逻辑。
@@ -86,5 +108,8 @@ PAPERLINGO_DATA_DIR="$(mktemp -d /tmp/paperlingo-dev.XXXXXX)" \
 - `engine/server.py`：只监听回环，校验 Origin、Content-Type、文本长度、语速和音色；模型惰性载入，推理串行化。
 - 分段流用 UUID 标识请求，客户端停止或重启朗读时取消旧队列；完成中的小段推理不会被强制杀死。
 - 查阅成功后才更新学习数据，失败时保留真实错误，不能写入虚构译文。
+- `ResearchModels/Database/Client`：v2 档案与笔记、FTS5、逐页分块、向量一致性、结构化本地推理和引文匹配。持久化页码从零开始，界面显示时加一。
+- `ResearchStore/Views`：任务与取消、完整文本处理、分段缓存及分层汇总、分类采用、关键词与语义融合检索。笔记与手工元信息独立于模型结果。
+- 首次升级先通过 SQLite backup API 保存一致快照，再事务迁移到 `user_version=2`；不能用文件复制替代正在使用的 WAL 数据库备份。
 
 优先遵循相邻代码格式。修复数据库与队列问题时关注持久性、去重和取消边界；不要添加只复述实现的检查。提交前查看 `git diff --check`，确保没有权重、个人数据、日志或绝对开发机路径。

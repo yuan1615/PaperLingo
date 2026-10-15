@@ -1,18 +1,19 @@
-PaperLingo v0.1.0 — 完整离线版（Apple Silicon）
+PaperLingo v0.2.0 — 完整离线版（Apple Silicon）
 
 适用电脑
 • Apple M 系列芯片，macOS 14 或以上。
-• 建议至少 16 GB 内存，32 GB 使用更从容。
-• 建议保留至少 20 GB 可用磁盘空间，用于安装镜像、应用和缓存。
-• 本包包含 OmniVoice、音频 tokenizer、TranslateGemma 4B、Ollama 和 Python；
+• 完整研究功能建议至少 32 GB 统一内存。
+• 建议保留至少 60 GB 可用磁盘空间，用于安装镜像、应用和缓存。
+• 本包包含 OmniVoice、音频 tokenizer、TranslateGemma 4B、Qwen3.6 27B、
+  Qwen3 Embedding 0.6B、Ollama 和 Python；
   无需安装 Xcode、Homebrew、Python 或单独下载模型。不适用于 Intel Mac。
 
 安装步骤
-1. 将整个 PaperLingo-0.1.0-macOS-arm64-offline.dmg 复制到新 Mac。
+1. 将整个 PaperLingo-0.2.0-macOS-arm64-offline.dmg 复制到新 Mac。
 2. 双击打开 DMG，把 PaperLingo.app 拖入旁边的 Applications（应用程序）。
    也可以复制到当前用户的 ~/Applications 目录；需要先完整复制，再启动。
 3. 从“应用程序”打开 PaperLingo。两个模型服务会自动启动，首次朗读需加载模型。
-4. 可断网使用本地 PDF、翻译和发音；导入网页链接仍需联网。
+4. 可断网使用本地 PDF、翻译、发音、笔记、整理和检索；导入网页链接仍需联网。
 5. 每日提醒默认为北京时间 20:30；请在新 Mac 的设置页重新允许通知。
 
 首次打开提示
@@ -30,11 +31,13 @@ Apple 说明：https://support.apple.com/guide/mac-help/mh40616/mac
 
 文件位置
 • 应用、运行环境和模型：PaperLingo.app 内，随应用一起移动。
-• 论文、词库及复习：~/Library/Application Support/PaperLingo/
+• 论文、词库、复习、档案、笔记和研究索引：~/Library/Application Support/PaperLingo/
 • 本地日志、可写模型索引和音频缓存：上述目录下的 Engine/。
 • 请退出应用后再移动或替换 app；下次启动会更新模型位置。
 
 现有学习记录
+首次升级 v0.2 会在数据目录的 Backups 中保存升级前的数据库一致快照，
+再新增研究库数据表。备份不包含 PDF；不要长期交替使用旧版打开同一目录。
 本安装包只包含应用和模型，不包含你在旧电脑上的论文、词库或学习日志。
 如需迁移，先在两台电脑退出 PaperLingo，完整复制旧电脑的
 ~/Library/Application Support/PaperLingo/ 文件夹到新电脑的同一位置。
@@ -47,9 +50,10 @@ library.sqlite-shm 辅助文件，仅复制 library.sqlite 可能遗漏最近记
 这是个人非商业学习使用的打包版本。OmniVoice 预训练权重按其模型卡使用
 CC-BY-NC 许可；OmniVoice 代码为 Apache-2.0。TranslateGemma 遵循 Gemma
 Terms of Use 和 Gemma Prohibited Use Policy，包括其中第 3.2 节限制。
+Qwen3.6 和 Qwen3 Embedding 使用 Apache-2.0。
 许可证、模型作者信息和 Notice 位于 app 的 Contents/Resources/ThirdParty；
 模型权重未改动。Python 及依赖的许可保留在各自 dist-info 和标准库内。
 
 完整性
 镜像旁的 .sha256 文件记录 DMG 的 SHA-256。可在终端运行：
-shasum -a 256 -c PaperLingo-0.1.0-macOS-arm64-offline.dmg.sha256
+shasum -a 256 -c PaperLingo-0.2.0-macOS-arm64-offline.dmg.sha256

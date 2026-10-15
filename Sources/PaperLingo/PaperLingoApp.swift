@@ -10,6 +10,8 @@ final class AppDelegate:NSObject,NSApplicationDelegate,UNUserNotificationCenterD
     @MainActor func applicationWillTerminate(_ notification:Notification) {
         // SwiftUI subscriptions may already be gone when AppKit terminates.
         // Signal the owned engines synchronously before the app exits.
+        store?.shuttingDown=true
+        store?.researchTask?.cancel();store?.textIndexTask?.cancel();store?.searchTask?.cancel()
         store?.audio.stop()
         store?.engines.stop()
     }
@@ -53,6 +55,10 @@ final class AppDelegate:NSObject,NSApplicationDelegate,UNUserNotificationCenterD
         .defaultSize(width:1440,height:900)
         .windowStyle(.hiddenTitleBar)
         .commands {
+            CommandMenu("研究库") {
+                Button("打开研究库"){store.route = .library}.keyboardShortcut("k",modifiers:[.command,.shift])
+                Button("记录当前论文…"){store.noteCurrentLocation()}.keyboardShortcut("n",modifiers:[.command,.shift]).disabled(store.currentNotePaper==nil || store.noteEditor != nil || store.metadataEditor != nil)
+            }
             CommandGroup(replacing:.newItem) {
                 Button("导入 PDF…") { store.choosePDF() }.keyboardShortcut("o")
                 Button("导入链接…") { store.showLink=true }.keyboardShortcut("o",modifiers:[.command,.shift])

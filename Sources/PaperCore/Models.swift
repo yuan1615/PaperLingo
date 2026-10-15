@@ -47,7 +47,7 @@ public enum TextTools {
     }
 }
 
-public struct Paper: Identifiable, Codable, Equatable {
+public struct Paper: Identifiable, Codable, Equatable, Sendable {
     public var id: String
     public var title: String
     public var filename: String

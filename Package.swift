@@ -9,6 +9,7 @@ let package = Package(
         .systemLibrary(name: "CSQLite"),
         .target(name: "PaperCore", dependencies: ["CSQLite"]),
         .executableTarget(name: "PaperLingo", dependencies: ["PaperCore"]),
-        .executableTarget(name: "PaperCoreChecks", dependencies: ["PaperCore"], path: "Tests/PaperCoreTests")
+        .executableTarget(name: "PaperCoreChecks", dependencies: ["PaperCore"], path: "Tests/PaperCoreTests"),
+        .executableTarget(name: "PaperResearchSmoke", dependencies: ["PaperCore"])
     ]
 )
