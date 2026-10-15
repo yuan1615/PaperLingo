@@ -17,6 +17,7 @@ import PaperCore
             "passed": false, "analysis_model": ResearchModels.analysis, "embedding_model": ResearchModels.embedding,
         ]
         report["mode"] = args.contains("--embedding-only") ? "embedding-only" : "analysis-and-embedding"
+        report["prompt_version"] = ResearchModels.promptVersion
         do {
             try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
             if !args.contains("--embedding-only") {
@@ -55,6 +56,19 @@ import PaperCore
                 guard !digest.points.isEmpty else {
                     throw ResearchError.message("No generated evidence matched the source")
                 }
+                if argument("--source") == nil {
+                    let qualified = ["合成", "诊断", "虚构", "synthetic"].contains {
+                        digest.oneLine.localizedCaseInsensitiveContains($0)
+                    }
+                    report["synthetic_qualifier_preserved"] = qualified
+                    guard qualified else {
+                        throw ResearchError.message("The summary omitted the fixture's synthetic/diagnostic scope")
+                    }
+                    guard !digest.suggestedCategory.isEmpty, digest.suggestedCategory != "未分类" else {
+                        throw ResearchError.message("The clear retrieval topic was left unclassified")
+                    }
+                }
+                report["suggested_category"] = digest.suggestedCategory
                 report["analysis_seconds"] = Date().timeIntervalSince(started)
                 report["grounded_points"] = digest.points.count
                 report["rejected_evidence"] = digest.rejectedEvidence

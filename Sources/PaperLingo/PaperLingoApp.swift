@@ -7,6 +7,14 @@ extension Notification.Name { static let openReview=Notification.Name("PaperLing
 final class AppDelegate:NSObject,NSApplicationDelegate,UNUserNotificationCenterDelegate {
     @MainActor static var pendingListening:Bool?
     @MainActor weak var store:AppStore?
+    @MainActor func applicationShouldTerminate(_ sender:NSApplication) -> NSApplication.TerminateReply {
+        guard let store,store.hasUnsavedResearchEdits,(store.noteEditor != nil || store.metadataEditor != nil) else {return .terminateNow}
+        let alert=NSAlert();alert.messageText="还有未保存的研究记录"
+        alert.informativeText="个人笔记或文献档案尚有未保存修改。继续编辑后可先保存，再退出应用。"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle:"继续编辑");alert.addButton(withTitle:"放弃修改并退出")
+        return alert.runModal() == .alertSecondButtonReturn ? .terminateNow : .terminateCancel
+    }
     @MainActor func applicationWillTerminate(_ notification:Notification) {
         // SwiftUI subscriptions may already be gone when AppKit terminates.
         // Signal the owned engines synchronously before the app exits.
@@ -60,8 +68,8 @@ final class AppDelegate:NSObject,NSApplicationDelegate,UNUserNotificationCenterD
                 Button("记录当前论文…"){store.noteCurrentLocation()}.keyboardShortcut("n",modifiers:[.command,.shift]).disabled(store.currentNotePaper==nil || store.noteEditor != nil || store.metadataEditor != nil)
             }
             CommandGroup(replacing:.newItem) {
-                Button("导入 PDF…") { store.choosePDF() }.keyboardShortcut("o")
-                Button("导入链接…") { store.showLink=true }.keyboardShortcut("o",modifiers:[.command,.shift])
+                Button("导入 PDF…") { store.choosePDF() }.keyboardShortcut("o").disabled(store.noteEditor != nil || store.metadataEditor != nil)
+                Button("导入链接…") { store.showLink=true }.keyboardShortcut("o",modifiers:[.command,.shift]).disabled(store.noteEditor != nil || store.metadataEditor != nil)
             }
             CommandMenu("阅读视图") {
                 Button("专注阅读 / 退出专注") {store.layout.focused.toggle()}.keyboardShortcut("f",modifiers:[.command,.shift]).disabled(store.route != .reading || store.selectedPaper == nil)

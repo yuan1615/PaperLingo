@@ -360,18 +360,45 @@ extension AppStore {
                 try db?.cacheAnalysis(draft, key: key, paperID: paper.id)
             }
             partials.append(draft)
+            if index == 0, groups.count > 1, let status = textStatuses[paper.id] {
+                let existing = digests[paper.id]
+                let needsPreview =
+                    existing == nil
+                    || (existing?.isPartial == true
+                        && (!useCache || existing?.model != signature || existing?.sourceHash != status.sourceHash))
+                if needsPreview {
+                    var preview = draft.grounded(
+                        in: group, paperID: paper.id, model: signature,
+                        sourceHash: status.sourceHash, totalPages: status.totalPages)
+                    if !preview.points.isEmpty {
+                        preview.isPartial = true
+                        try db?.saveDigest(preview)
+                        digests[paper.id] = preview
+                    }
+                }
+            }
             researchProgress = base + scale * 0.75 * Double(index + 1) / Double(groups.count)
         }
         // Bibliographic suggestions come from the opening source group, so
         // reference sections processed later cannot replace the paper's identity.
         let bibliography = partials.first
+        // Reference-only groups may correctly return no findings. They need no
+        // additional consolidation calls and cannot contribute study evidence.
+        partials.removeAll { $0.points.isEmpty }
         var level = 0
+        var remaining = partials.count
+        var mergeBatches = 0
+        while remaining > 1 {
+            remaining = (remaining + 2) / 3
+            mergeBatches += remaining
+        }
+        var completedBatches = 0
         while partials.count > 1 {
             var merged: [DigestDraft] = []
             level += 1
             for offset in stride(from: 0, to: partials.count, by: 3) {
                 try Task.checkCancellation()
-                researchMessage = "合并 \(paper.title) · 第 \(level) 层"
+                researchMessage = "合并 \(paper.title) · 第 \(level) 层 · 第 \(offset / 3 + 1)/\((partials.count + 2) / 3) 组"
                 let batch = Array(partials[offset..<min(offset + 3, partials.count)])
                 if batch.count == 1 {
                     merged.append(batch[0])
@@ -380,6 +407,8 @@ extension AppStore {
                         try await researchClient.draft(
                             chunks: [], previous: batch, categories: categories, final: partials.count <= 3))
                 }
+                completedBatches += 1
+                researchProgress = base + scale * (0.75 + 0.25 * Double(completedBatches) / Double(max(1, mergeBatches)))
             }
             partials = merged
         }

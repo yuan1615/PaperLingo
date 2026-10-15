@@ -54,6 +54,7 @@ enum Route: String, CaseIterable { case reading = "阅读空间", library="研�
     var textIndexTask:Task<Void,Never>?
     var searchTask:Task<Void,Never>?
     var semanticSearchQuery:String?
+    var hasUnsavedResearchEdits=false
     var shuttingDown=false
     var allowEngineRestore=true
     let researchClient=ResearchClient()

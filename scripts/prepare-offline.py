@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import plistlib
 import shutil
+import subprocess
 import sys
 
 ROOT=Path(sys.argv[1]).resolve()
@@ -16,6 +17,16 @@ REVISION='c5fdb5ccb189668d56333f77ba2629f4cd7535f4'
 IGNORE=shutil.ignore_patterns('__pycache__','*.pyc','.DS_Store')
 VERSION=plistlib.loads((APP/'Contents/Info.plist').read_bytes())['CFBundleShortVersionString']
 RESEARCH_MODELS=('qwen3.6:27b-q4_K_M','qwen3-embedding:0.6b')
+
+def copy_file(source,target):
+    # APFS clones are independent files, not links to the development runtime.
+    # Keep a regular-copy fallback for other filesystems; disk preflight always
+    # reserves the full logical size, even when cloning is requested.
+    if os.environ.get('PAPERLINGO_CLONE_STAGE')=='1' and sys.platform=='darwin' and Path(source).stat().st_size>=8*1024**2:
+        result=subprocess.run(['/bin/cp','-c','-p',str(Path(source).resolve()),str(target)],
+                              stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
+        if result.returncode==0:return str(target)
+    return shutil.copy2(source,target)
 
 def model_files(name):
     repository,tag=name.rsplit(':',1)
@@ -37,7 +48,7 @@ def tree_size(path):
 
 def copy(source,target,links=True):
     print(f'Packaging {target.relative_to(APP)}',flush=True)
-    shutil.copytree(source,target,symlinks=links,ignore=IGNORE,dirs_exist_ok=True)
+    shutil.copytree(source,target,symlinks=links,ignore=IGNORE,dirs_exist_ok=True,copy_function=copy_file)
 
 if DEST.exists():
     raise SystemExit('Runtime already staged. Use a fresh app output directory for a reproducible package.')
@@ -84,7 +95,7 @@ copy(SOURCE/'ollama',DEST/'ollama')
 for file in [*manifests,*sorted(blobs)]:
     target=DEST/'ollama-models'/file.relative_to(SOURCE/'ollama-models')
     target.parent.mkdir(parents=True,exist_ok=True)
-    shutil.copy2(file,target)
+    copy_file(file,target)
 # Dereference HF cache links: the app contains one independent, full snapshot.
 copy(snapshot,DEST/'models/OmniVoice',links=False)
 (DEST/'models.ready').write_text(json.dumps({'omnivoice':'models/OmniVoice','revision':REVISION}))

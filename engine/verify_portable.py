@@ -1,8 +1,12 @@
 """Verify the embedded runtime after relocation; --smoke runs both local models.
 
-Run with the Python inside PaperLingo.app, never the developer's interpreter.
+Run with PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 and the Python inside
+PaperLingo.app, never the developer's interpreter.
 No downloads or services outside loopback are used.
 """
+import sys
+sys.dont_write_bytecode = True
+
 import argparse
 import array
 import hashlib
@@ -14,7 +18,6 @@ import re
 import shutil
 import socket
 import subprocess
-import sys
 import tempfile
 import time
 import urllib.request
@@ -55,6 +58,9 @@ def verify(app, work, smoke=False):
         import torchaudio
         import soundfile
         from omnivoice import OmniVoice
+        embedded=(runtime/'python').resolve()
+        for module in (torch,torchaudio,soundfile,sys.modules['omnivoice']):
+            assert Path(module.__file__).resolve().is_relative_to(embedded),f'External dependency imported: {module.__name__}'
         checks['python']=sys.version.split()[0]
         checks['torch']=torch.__version__
         checks['mps']=torch.backends.mps.is_available()

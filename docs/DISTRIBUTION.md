@@ -12,6 +12,9 @@
 
 ```bash
 bash scripts/package-offline.sh
+
+# 同一 APFS 卷可选择克隆大文件，减少暂存副本的实际磁盘占用
+PAPERLINGO_CLONE_STAGE=1 PAPERLINGO_STAGE_ONLY=1 bash scripts/package-offline.sh
 ```
 
 输出：
@@ -26,6 +29,8 @@ dist/
   PaperLingo-0.2.0-macOS-arm64-offline.dmg
   PaperLingo-0.2.0-macOS-arm64-offline.dmg.sha256
 ```
+
+`PAPERLINGO_CLONE_STAGE=1` 在 macOS/APFS 上优先以独立的写时复制文件暂存大模型和大运行库，不创建指向项目的链接；原项目删除或移动后，暂存 app 的文件仍独立存在。不支持克隆时回退到普通复制，空间预检仍按完整逻辑体积计算。
 
 脚本拒绝覆盖已有分发 app 中的 `Runtime/`。重新构建前先把旧 `dist/PaperLingo-0.2.0-Offline/` 整体移到其他目录保存，再执行脚本，避免混用旧资源。
 
@@ -42,7 +47,8 @@ cp -R dist/PaperLingo-0.2.0-Offline/PaperLingo.app /tmp/paperlingo-relocated/
 
 # 用搬迁后 app 自己的 Python 校验权重、导入、MPS 和真实推理
 APP=/tmp/paperlingo-relocated/PaperLingo.app
-"$APP/Contents/Resources/Runtime/venv/bin/python" \
+PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 \
+  "$APP/Contents/Resources/Runtime/venv/bin/python" \
   "$APP/Contents/Resources/engine/verify_portable.py" \
   --app "$APP" --work /tmp/paperlingo-portable-check --smoke
 

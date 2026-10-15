@@ -1,0 +1,32 @@
+{
+  "passed": true,
+  "source": "OmniVoice arXiv:2604.00688v3; isolated native app library",
+  "model": "qwen3.6:27b-q4_K_M@3a40c32f1450b8380412898385b0e00df5d6d2d801dd192ca1acb7e735cd050e",
+  "prompt_version": "paperlingo-digest-v2.4",
+  "total_pages": 22,
+  "processed_text_pages": 22,
+  "partial": false,
+  "grounded_points": 11,
+  "rejected_evidence": 1,
+  "topics": {
+    "problem": 1,
+    "method": 2,
+    "contribution": 2,
+    "results": 3,
+    "limitations": 3
+  },
+  "category": "Speech Synthesis",
+  "resume_to_completion_seconds": 3155.992,
+  "cached_source_groups": 13,
+  "first_group_cache_reused": true,
+  "manual_record_fields_preserved": true,
+  "exported_note_contents_preserved": true,
+  "notes_unchanged_during_consolidation": true,
+  "one_line": "OmniVoice是支持600+语言的零样本TTS模型，采用扩散语言模型架构和全码本掩码策略，在多项基准上达到SOTA性能。",
+  "validation_scope": "Functional pipeline checks, not an accuracy benchmark",
+  "manual_quality_review": {
+    "experimental_specificity": "Insufficient: training-data hours occupied two result points while detailed benchmark comparisons were compressed",
+    "grounding_limit": "A matched source quote does not verify that the whole generated interpretation follows from it",
+    "recommended_follow_up": "Preserve dataset, metric, baseline, measurement and conditions as structured experimental records before writing the final digest"
+  }
+}

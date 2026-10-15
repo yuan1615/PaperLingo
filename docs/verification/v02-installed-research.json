@@ -1,0 +1,20 @@
+{
+  "analysis_model" : "qwen3.6:27b-q4_K_M",
+  "analysis_seconds" : 172.80018997192383,
+  "cross_language_scores" : [
+    0.73331350817978858,
+    0.26201681092771312,
+    0.23343889482005434
+  ],
+  "embedding_dimensions" : 1024,
+  "embedding_model" : "qwen3-embedding:0.6b",
+  "grounded_points" : 9,
+  "mode" : "analysis-and-embedding",
+  "one_line" : "合成诊断测试：混合检索在20个查询中18次命中，非正式发表。",
+  "passed" : true,
+  "prompt_version" : "paperlingo-digest-v2.4",
+  "rejected_evidence" : 0,
+  "source" : "explicitly synthetic diagnostic fixture",
+  "suggested_category" : "信息检索",
+  "synthetic_qualifier_preserved" : true
+}

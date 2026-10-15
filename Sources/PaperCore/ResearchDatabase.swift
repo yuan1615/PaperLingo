@@ -286,7 +286,7 @@ extension Database {
         ]
         if let digest {
             lines += [
-                "", "## AI 汇总", "", digest.oneLine, "",
+                "", digest.isPartial == true ? "## AI 阶段预览（全文尚未完成）" : "## AI 汇总", "", digest.oneLine, "",
                 "模型：\(digest.model) · \(digest.created.formatted()) · 已处理有文字的 \(digest.processedPages)/\(digest.totalPages) 页。内容仍需对照论文核实。",
             ]
             for topic in DigestTopic.allCases {

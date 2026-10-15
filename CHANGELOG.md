@@ -11,6 +11,7 @@ Notable changes are recorded here. Version numbers follow `MAJOR.MINOR.PATCH`; v
 - Local structured paper summaries with Qwen3.6 27B Q4, six research topics, matched original quotes and explicit adoption of metadata suggestions.
 - CJK keyword search across metadata, notes, summaries and extracted text; multilingual semantic retrieval with Qwen3 Embedding 0.6B.
 - Cancellable document processing, resumable map-stage cache, versioned vector indexes and Markdown archive export.
+- Evidence-linked partial previews after the first source group, clearly marked until full-document consolidation completes; older complete summaries stay visible during regeneration.
 - Transactional v0.1 database upgrade with a consistent pre-upgrade SQLite backup, including committed WAL contents.
 - Research model installer with disk preflight, progress reporting, checksum-verified Ollama pulls and interrupted metadata recovery.
 - Library and selection-note keyboard shortcuts, compact library navigation and floating processing status while reading.
@@ -19,13 +20,16 @@ Notable changes are recorded here. Version numbers follow `MAJOR.MINOR.PATCH`; v
 
 - Open into the research library; retain existing papers, vocabulary, reading positions and reminder preferences.
 - Pause owned OmniVoice service during large-model summarization and unload research models after processing.
+- Show consolidation layers, source groups and advancing progress while long-document summaries are merged.
 - Version offline package names from Info.plist; select required complete models and preflight staging/image space.
 
 ### Validation status
 
 - Regression checks: 18 Swift core checks and 23 Python checks passed.
 - Isolated native UI: metadata, notes, quote/page capture, unsaved-edit protection, keyword retrieval and Markdown export verified.
-- Real research model inference and final app delivery are still undergoing acceptance; see the v0.2 verification document when available.
+- Full 22-page native-app processing completed with 11 matched-source points and one rejected quote; cancellation/resume and manual-record preservation passed.
+- Installed self-contained app passed relocated Python/MPS, all model checksums, translation, progressive audio and post-inference signature checks.
+- Functional validation does not establish summary accuracy. The long-paper run took about 52.6 minutes after resuming, and detailed experimental comparisons were underrepresented; see [v0.2 verification](docs/VERIFICATION_V0.2.md).
 
 ## [0.1.0] - 2026-10-15
 

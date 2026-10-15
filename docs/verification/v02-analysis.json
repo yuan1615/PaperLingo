@@ -1,0 +1,19 @@
+{
+  "analysis_model" : "qwen3.6:27b-q4_K_M",
+  "analysis_seconds" : 124.31770598888397,
+  "cross_language_scores" : [
+    0.73331350817978858,
+    0.26201681092771312,
+    0.23343889482005434
+  ],
+  "embedding_dimensions" : 1024,
+  "embedding_model" : "qwen3-embedding:0.6b",
+  "grounded_points" : 6,
+  "mode" : "analysis-and-embedding",
+  "one_line" : "合成诊断测试，非正式发表。评估混合检索在研究笔记中的应用。",
+  "passed" : true,
+  "prompt_version" : "paperlingo-digest-v2.3",
+  "rejected_evidence" : 0,
+  "source" : "explicitly synthetic diagnostic fixture",
+  "synthetic_qualifier_preserved" : true
+}

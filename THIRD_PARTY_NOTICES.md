@@ -31,6 +31,7 @@ The OmniVoice snapshot contains Boson AI's Higgs Audio V2 tokenizer. Its communi
 - Qwen3.6 27B: Alibaba Cloud / Qwen, [official model card](https://huggingface.co/Qwen/Qwen3.6-27B); distributed by Ollama as `qwen3.6:27b-q4_K_M`.
 - Qwen3 Embedding 0.6B: Qwen, [official model card](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B); Ollama `qwen3-embedding:0.6b`.
 - Both upstream models use Apache-2.0. License copies: [Qwen3.6](packaging/third-party/Qwen3.6-27B-LICENSE.txt), [Qwen3 Embedding](packaging/third-party/Qwen3-Embedding-0.6B-LICENSE.txt).
+- Verified v0.2 manifests: Qwen3.6 `3a40c32f1450b8380412898385b0e00df5d6d2d801dd192ca1acb7e735cd050e`; Qwen3 Embedding `ac6da0dfba84a81fdbfbaf330198c33cd77c4cdfc53e8bc50eb581914a15621d`.
 - Tags are mutable. Installation records actual model metadata/digests; offline distribution records the SHA-256 of every included weight. PaperLingo does not alter weights; its prompts, context limits and local indexing are application configuration.
 
 ## Ollama, Python and runtime dependencies

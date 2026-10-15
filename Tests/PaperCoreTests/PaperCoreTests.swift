@@ -247,6 +247,16 @@ extension PaperCoreTests {
         let markdown=try db.exportPaperMarkdown(paper)
         XCTAssertTrue(markdown.contains("第 2 页"));XCTAssertTrue(markdown.contains("Keep original thought"))
         XCTAssertEqual(try db.latestDigests()["p"]?.points.count,1)
+        let legacyData=try JSONEncoder().encode(digest)
+        XCTAssertTrue(try JSONDecoder().decode(PaperDigest.self,from:legacyData).isPartial == nil)
+        var preview=digest;preview.id=UUID().uuidString;preview.isPartial=true;preview.created=Date().addingTimeInterval(1)
+        try db.saveDigest(preview)
+        XCTAssertTrue(try db.latestDigests()["p"]?.isPartial == true)
+        XCTAssertTrue(try db.exportPaperMarkdown(paper).contains("阶段预览（全文尚未完成）"))
+        var complete=digest;complete.id=UUID().uuidString;complete.created=Date().addingTimeInterval(2)
+        try db.saveDigest(complete)
+        XCTAssertTrue(try db.latestDigests()["p"]?.isPartial != true)
+        XCTAssertEqual(try db.notes(paperID:"p").first?.body,"Keep original thought")
     }
     func testSemanticRankingRejectsWrongModelAndInvalidVectors() {
         var a=PaperTextChunk(paperID:"a",page:1,ordinal:0,text:"Matching text",vector:[1,0],vectorModel:"v1")

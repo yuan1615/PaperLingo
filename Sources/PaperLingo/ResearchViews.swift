@@ -83,8 +83,13 @@ struct ResearchLibraryScreen: View {
                     Button("导入 PDF…") { store.choosePDF() }
                     Button("导入链接…") { store.showLink = true }
                     Divider()
-                    Button("整理尚无汇总的论文") { store.startResearch(store.papers.filter { store.digests[$0.id] == nil }) }
-                        .disabled(store.researchBusy || store.searching)
+                    Button("整理尚无完整汇总的论文") {
+                        store.startResearch(
+                            store.papers.filter {
+                                store.digests[$0.id] == nil || store.digests[$0.id]?.isPartial == true
+                            })
+                    }
+                    .disabled(store.researchBusy || store.searching)
                     Button("建立 / 更新全部检索索引") { store.startResearch(store.papers, summarize: false) }.disabled(
                         store.researchBusy || store.searching)
                 } label: {
@@ -224,7 +229,10 @@ struct ResearchPaperRow: View {
                 Text("·")
                 Text(record.year.isEmpty ? paper.kind : record.year)
                 Spacer()
-                if store.digests[paper.id] != nil { Image(systemName: "sparkles").help("已有 AI 汇总") }
+                if let digest = store.digests[paper.id] {
+                    Image(systemName: digest.isPartial == true ? "clock" : "sparkles").help(
+                        digest.isPartial == true ? "阶段概览，全文尚未完成" : "已有 AI 汇总")
+                }
             }.font(.system(size: 10)).foregroundStyle(Palette.muted)
             Text(([record.category] + Array(record.tags.prefix(2))).joined(separator: " · ")).font(.system(size: 10))
                 .foregroundStyle(Palette.green).lineLimit(1)
@@ -454,9 +462,9 @@ struct ResearchPaperDetail: View {
             }
             Divider()
             if let digest = store.digests[paper.id] {
-                Text("一句话回顾").font(.system(size: 14, weight: .semibold))
+                Text(digest.isPartial == true ? "阶段概览 · 全文尚未完成" : "一句话回顾").font(.system(size: 14, weight: .semibold))
                 Text(digest.oneLine).font(.system(size: 13)).lineSpacing(5).textSelection(.enabled)
-                Button("查看完整 AI 汇总与证据") { tab = 1 }.buttonStyle(.bordered)
+                Button(digest.isPartial == true ? "查看阶段概览与证据" : "查看完整 AI 汇总与证据") { tab = 1 }.buttonStyle(.bordered)
             } else {
                 Text("还没有 AI 汇总").font(.system(size: 14, weight: .semibold))
                 Text("整理会提取研究问题、方法、贡献和局限，并保留可回到原文的证据。个人笔记与手工资料会单独保留。").font(.system(size: 12)).foregroundStyle(
@@ -478,11 +486,20 @@ struct ResearchPaperDetail: View {
         Button {
             store.startResearch([paper])
         } label: {
-            Label(store.digests[paper.id] == nil ? "用本地模型整理论文" : "更新 AI 汇总", systemImage: "sparkles")
+            Label(
+                store.digests[paper.id] == nil
+                    ? "用本地模型整理论文" : (store.digests[paper.id]?.isPartial == true ? "继续全文整理" : "更新 AI 汇总"),
+                systemImage: "sparkles")
         }.buttonStyle(PrimaryButton()).disabled(store.researchBusy || store.searching)
     }
     @ViewBuilder private var digest: some View {
         if let digest = store.digests[paper.id] {
+            if digest.isPartial == true {
+                Label("阶段预览：仅基于 \(digest.processedPages) 个有文字页面，全文尚未完成。可先阅读；如已取消，可继续整理。", systemImage: "clock").font(
+                    .system(size: 12, weight: .medium)
+                ).foregroundStyle(Palette.orange).padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Palette.orange.opacity(0.07), in: RoundedRectangle(cornerRadius: 9))
+            }
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 7) {
                     Text(digest.oneLine).font(.system(size: 17, weight: .medium, design: .serif)).lineSpacing(6)
@@ -493,7 +510,9 @@ struct ResearchPaperDetail: View {
                 }
                 Spacer()
             }
-            Text("已处理含文字的 \(digest.processedPages) 页 / 原文件共 \(digest.totalPages) 页；下面的摘录已匹配原文，但对结论的解释仍需你核实。").font(
+            Text(
+                "已处理含文字的 \(digest.processedPages) 页 / 原文件共 \(digest.totalPages) 页；仅分析文字层，未解读图片或图表。下面的摘录已匹配原文，对结论的解释仍需你核实。"
+            ).font(
                 .system(size: 10)
             ).foregroundStyle(Palette.muted).lineSpacing(4)
             if store.textStatuses[paper.id]?.sourceHash != digest.sourceHash {
@@ -674,6 +693,9 @@ struct ResearchNoteEditor: View {
                 ).disabled(draft.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && draft.quote.isEmpty)
             }
         }.padding(24).frame(width: 620, height: 620).background(Palette.cream).interactiveDismissDisabled()
+            .onAppear { store.hasUnsavedResearchEdits = draft != original }
+            .onChange(of: draft) { store.hasUnsavedResearchEdits = $0 != original }
+            .onDisappear { if store.noteEditor == nil { store.hasUnsavedResearchEdits = false } }
             .confirmationDialog("放弃未保存的笔记修改？", isPresented: $discard, titleVisibility: .visible) {
                 Button("放弃修改", role: .destructive) { store.noteEditor = nil }
                 Button("继续编辑", role: .cancel) {}
@@ -689,6 +711,9 @@ struct ResearchMetadataEditor: View {
     @State private var tags: String
     @State private var discard = false
     let original: PaperRecord
+    private var hasChanges: Bool {
+        draft != original || title != paper.title || tags != original.tags.joined(separator: ", ")
+    }
     init(store: AppStore, paper: Paper) {
         self.store = store
         self.paper = paper
@@ -740,6 +765,9 @@ struct ResearchMetadataEditor: View {
                     title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }.padding(24).frame(width: 600, height: 600).background(Palette.cream).interactiveDismissDisabled()
+            .onAppear { store.hasUnsavedResearchEdits = hasChanges }
+            .onChange(of: hasChanges) { store.hasUnsavedResearchEdits = $0 }
+            .onDisappear { if store.metadataEditor == nil { store.hasUnsavedResearchEdits = false } }
             .confirmationDialog("放弃未保存的档案修改？", isPresented: $discard, titleVisibility: .visible) {
                 Button("放弃修改", role: .destructive) { store.metadataEditor = nil }
                 Button("继续编辑", role: .cancel) {}

@@ -124,6 +124,7 @@ public struct PaperDigest: Identifiable, Codable, Equatable, Sendable {
     public var suggestedTags: [String]
     public var points: [DigestPoint]
     public var rejectedEvidence: Int
+    public var isPartial: Bool? = nil
 }
 
 public struct DigestDraft: Codable, Sendable {
