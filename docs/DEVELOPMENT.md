@@ -114,8 +114,9 @@ PAPERLINGO_DATA_DIR="$(mktemp -d /tmp/paperlingo-dev.XXXXXX)" \
 - `engine/server.py`：只监听回环，校验 Origin、Content-Type、文本长度、语速和音色；模型惰性载入，推理串行化。
 - 分段流用 UUID 标识请求，客户端停止或重启朗读时取消旧队列；完成中的小段推理不会被强制杀死。
 - 查阅成功后才更新学习数据，失败时保留真实错误，不能写入虚构译文。
-- `ResearchModels/Database/Client`：v2 档案与笔记、FTS5、逐页分块、向量一致性、结构化本地推理和引文匹配。持久化页码从零开始，界面显示时加一。
-- `ResearchStore/Views`：任务与取消、完整文本处理、分段缓存及分层汇总、分类采用、关键词与语义融合检索。笔记与手工元信息独立于模型结果。
-- 首次升级先通过 SQLite backup API 保存一致快照，再事务迁移到 `user_version=2`；不能用文件复制替代正在使用的 WAL 数据库备份。
+- `PaperSummary` 与 `ResearchModels/Database/Client`：文献档案、独立笔记、FTS5、前三页输入、固定结构中文摘要与每篇一个摘要向量。持久化页码从零开始，界面显示时加一。旧实验类型只用于历史兼容，不参与当前整理流程。
+- `ResearchStore/Views`：任务与取消、一次摘要生成、分类采用、关键词与语义融合检索，以及摘要优先的研究库布局。笔记与手工元信息独立于模型结果。
+- `Readers/SelectionPopover`：PDF / 网页选区锚点、拖选结束后的就地操作和译文展示；弹层不参与正文布局，在滚动、窗口调整及退出阅读时清理。
+- 首次升级先通过 SQLite backup API 保存一致快照，再事务迁移到当前 `user_version=4`；不能用文件复制替代正在使用的 WAL 数据库备份。
 
 优先遵循相邻代码格式。修复数据库与队列问题时关注持久性、去重和取消边界；不要添加只复述实现的检查。提交前查看 `git diff --check`，确保没有权重、个人数据、日志或绝对开发机路径。

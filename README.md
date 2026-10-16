@@ -15,7 +15,7 @@ Read papers. Learn words in context. Listen and review locally.
 
 PaperLingo 将 PDF / 网页阅读、选词翻译、英文发音和间隔复习放在同一阅读空间。研究库支持分类、个人笔记和中文检索。v0.2.2 只读取 PDF 前三页，按研究动机、核心方法、实验结果生成中文摘要，每篇只用这份摘要建立一个向量。翻译、发音、摘要和语义检索均使用本地模型。
 
-当前开发版本为 **v0.2.3**，新增摘要优先的研究库布局，以及 PDF / 网页选区旁的翻译与朗读弹层。设计见 [页面与选区交互](docs/V0.2.3_LAYOUT.md)、[前三页摘要方案](docs/V0.2.2_PLAN.md) 和 [v0.2 规划](docs/V0.2_PLAN.md)。本仓库提供源码、模型安装和离线打包脚本；**不包含模型权重、Python 运行环境、DMG 安装包或个人学习记录**。此前分发的 v0.1 离线包不含研究模型，不能替代 v0.2 安装。
+当前版本为 **[v0.2.3](https://github.com/yuan1615/PaperLingo/releases/tag/v0.2.3)**，新增摘要优先的研究库布局，以及 PDF / 网页选区旁的翻译与朗读弹层。设计见 [页面与选区交互](docs/V0.2.3_LAYOUT.md)、[前三页摘要方案](docs/V0.2.2_PLAN.md) 和 [v0.2 规划](docs/V0.2_PLAN.md)。本仓库提供源码、模型安装和离线打包脚本；**不包含模型权重、Python 运行环境、DMG 安装包或个人学习记录**。此前分发的 v0.1 离线包不含研究模型，不能替代 v0.2 安装。
 
 [快速开始](#快速开始) · [使用方式](#使用方式) · [项目架构](#项目架构) · [开发指南](docs/DEVELOPMENT.md) · [离线打包](docs/DISTRIBUTION.md) · [变更记录](CHANGELOG.md)
 
@@ -150,7 +150,7 @@ Tests/PaperCoreTests/     可独立运行的 Swift 核心检查
 scripts/                  构建、环境安装与离线打包
 packaging/                图标、Info.plist、安装说明及第三方许可
 docs/                     产品设计、开发、分发与验收记录
-.github/                  CI、Issue 表单与 PR 模板
+.github/                  未启用的 CI 示例、Issue 表单与 PR 模板
 ```
 
 ## 数据与隐私

@@ -17,6 +17,8 @@ Notable changes are recorded here. Version numbers follow `MAJOR.MINOR.PATCH`; v
 
 Interaction design and manual verification: [v0.2.3 layout](docs/V0.2.3_LAYOUT.md).
 
+Release validation also passed 26 model-free Python regression checks. The CI workflow remains an opt-in example and is not enabled.
+
 ## [0.2.2] - 2026-10-16
 
 ### Changed
@@ -105,4 +107,5 @@ Validation scope and limitations are documented in [v0.2.1 verification](docs/VE
 - Model accuracy and gap-free speech playback are not guaranteed.
 - Offline app builds use ad-hoc signing by default and are not Apple-notarized.
 
+[0.2.3]: https://github.com/yuan1615/PaperLingo/releases/tag/v0.2.3
 [0.1.0]: https://github.com/yuan1615/PaperLingo/releases/tag/v0.1.0
