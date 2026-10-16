@@ -32,6 +32,8 @@ dist/
 
 `PAPERLINGO_CLONE_STAGE=1` 在 macOS/APFS 上优先以独立的写时复制文件暂存大模型和大运行库，不创建指向项目的链接；原项目删除或移动后，暂存 app 的文件仍独立存在。不支持克隆时回退到普通复制，空间预检仍按完整逻辑体积计算。
 
+DMG 使用 `ULFO`（LZFSE）压缩，适用于本项目的 macOS 14+ 目标；打包时输出 `hdiutil` 阶段进度，避免大型权重使用 zlib 时的较长压缩等待。
+
 主程序使用原子写入，最终签名后再以相同字节刷新为新文件。若通过 APFS 克隆自行安装，可在启动前执行以下操作后验证签名；脚本不修改签名内容，也不关闭系统安全检查：
 
 ```bash
@@ -76,6 +78,8 @@ shasum -a 256 -c PaperLingo-0.2.3-macOS-arm64-offline.dmg.sha256
 
 上述检查不替代目标物理机器上的验收。`--smoke` 会启动专用回环端口上的引擎，结束时停止自己创建的服务；不操作用户学习数据库。
 
+2026-10-16 的 v0.2.3 完整镜像已通过镜像 CRC、独立 SHA-256 复核，以及挂载后推理结束时的严格 app 签名检查。只读镜像中的内置 Python / PyTorch / MPS 正常，17 个模型文件校验一致；真实翻译、分段音频和重排测试通过。另用同一离线 app 中的 Ollama 验证前三页中文摘要与 1024 维跨语言检索，素材明确为合成诊断。结果保存在本机 `dist/PaperLingo-0.2.3-verification.json`；未在另一台物理 Mac 上验收。首次从新路径启动时，曾观察到 macOS 系统校验等待，应给其完成时间。
+
 ## 内部布局
 
 - 独立 CPython 与 venv 的依赖合并，解释器链接使用相对路径，不依赖系统 Python 或 Homebrew。
@@ -88,7 +92,7 @@ shasum -a 256 -c PaperLingo-0.2.3-macOS-arm64-offline.dmg.sha256
 
 默认签名为本机 ad-hoc，未做 Apple Developer ID 公证。`PAPERLINGO_SIGN_IDENTITY` 可指定签名身份，但它不自动配置 hardened runtime、notarization 或 stapling；正式商业分发需要另行验证完整签名流程及模型许可。
 
-此前 v0.1 离线镜像约 6.5 GB；v0.2.3 研究、向量与重排模型共新增约 19.3 GB。本轮构建和验证自包含 app，未生成新的完整 DMG。脚本从 Info.plist 读取版本，不会覆盖旧分发目录；模型不齐全时拒绝打包，下载中的 partial 文件不入包。阶段副本与压缩镜像需要大量额外空间，脚本会在复制和压缩前分别预检。不要将 DMG、模型或 Python 环境提交到 Git；GitHub 单个 Release asset 也有尺寸限制，完整镜像需使用合适的独立分发渠道或另行设计可校验的分卷方案。GitHub Releases 中的源码归档不能直接双击安装。参考 [GitHub 大文件与 Release 文档](https://docs.github.com/en/repositories/working-with-files/managing-large-files/about-large-files-on-github)。
+此前 v0.1 离线镜像约 6.5 GB；v0.2.3 研究、向量与重排模型共新增约 19.3 GB。当前完整 DMG 为 25,009,271,792 字节（25.01 GB / 23.29 GiB），展开的 app 约 27.48 GB，旁边附有 SHA-256 和中文安装说明。完整镜像仅在本地生成并单独分发，未上传 GitHub。脚本从 Info.plist 读取版本，不会覆盖旧分发目录；模型不齐全时拒绝打包，下载中的 partial 文件不入包。阶段副本与压缩镜像需要大量额外空间，脚本会在复制和压缩前分别预检。不要将 DMG、模型或 Python 环境提交到 Git；GitHub 单个 Release asset 也有尺寸限制，完整镜像需使用合适的独立分发渠道或另行设计可校验的分卷方案。GitHub Releases 中的源码归档不能直接双击安装。参考 [GitHub 大文件与 Release 文档](https://docs.github.com/en/repositories/working-with-files/managing-large-files/about-large-files-on-github)。
 
 ## 用户安装与数据迁移
 

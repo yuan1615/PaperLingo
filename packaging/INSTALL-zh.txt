@@ -1,20 +1,28 @@
-PaperLingo v0.2.0 — 完整离线版（Apple Silicon）
+PaperLingo v0.2.3 — 完整离线版（Apple Silicon）
 
 适用电脑
 • Apple M 系列芯片，macOS 14 或以上。
 • 完整研究功能建议至少 32 GB 统一内存。
 • 建议保留至少 60 GB 可用磁盘空间，用于安装镜像、应用和缓存。
 • 本包包含 OmniVoice、音频 tokenizer、TranslateGemma 4B、Qwen3.6 27B、
-  Qwen3 Embedding 0.6B、Ollama 和 Python；
+  Qwen3 Embedding 0.6B、Qwen3 Reranker 0.6B、Ollama 和 Python；
   无需安装 Xcode、Homebrew、Python 或单独下载模型。不适用于 Intel Mac。
 
 安装步骤
-1. 将整个 PaperLingo-0.2.0-macOS-arm64-offline.dmg 复制到新 Mac。
+1. 将整个 PaperLingo-0.2.3-macOS-arm64-offline.dmg 复制到新 Mac。
 2. 双击打开 DMG，把 PaperLingo.app 拖入旁边的 Applications（应用程序）。
    也可以复制到当前用户的 ~/Applications 目录；需要先完整复制，再启动。
-3. 从“应用程序”打开 PaperLingo。两个模型服务会自动启动，首次朗读需加载模型。
+3. 复制完成后推出磁盘镜像，从“应用程序”打开 PaperLingo。
+   本地引擎会按需启动，首次翻译、朗读和整理需加载模型，可能稍慢。
 4. 可断网使用本地 PDF、翻译、发音、笔记、整理和检索；导入网页链接仍需联网。
 5. 每日提醒默认为北京时间 20:30；请在新 Mac 的设置页重新允许通知。
+
+v0.2.3 功能
+• 研究库默认展示中文摘要，筛选、排序和次要操作按需展开。
+• PDF / 网页选区旁提供翻译、朗读与笔记操作，译文在原位显示。
+• 仅汇总 PDF 前三页中的研究动机、核心方法和已报告实验结果；
+  每篇按中文摘要建立一个向量，不建立实验台账，不扫描全文。
+• 日常使用无需联网；网页导入仍需联网，不会自动下载模型。
 
 首次打开提示
 本包采用本机 ad-hoc 签名，没有 Apple Developer ID 公证。若 macOS 提示
@@ -36,8 +44,10 @@ Apple 说明：https://support.apple.com/guide/mac-help/mh40616/mac
 • 请退出应用后再移动或替换 app；下次启动会更新模型位置。
 
 现有学习记录
-首次升级 v0.2 会在数据目录的 Backups 中保存升级前的数据库一致快照，
-再新增研究库数据表。备份不包含 PDF；不要长期交替使用旧版打开同一目录。
+从旧版升级到当前数据库格式时，会先在数据目录的 Backups 中保存一致快照，
+再迁移研究库；旧实验台账与全文索引会被清理，个人笔记和学习记录保留。
+旧摘要需重新生成后才能建立新索引。备份不包含 PDF；
+不要长期交替使用旧版打开同一目录。
 本安装包只包含应用和模型，不包含你在旧电脑上的论文、词库或学习日志。
 如需迁移，先在两台电脑退出 PaperLingo，完整复制旧电脑的
 ~/Library/Application Support/PaperLingo/ 文件夹到新电脑的同一位置。
@@ -50,10 +60,14 @@ library.sqlite-shm 辅助文件，仅复制 library.sqlite 可能遗漏最近记
 这是个人非商业学习使用的打包版本。OmniVoice 预训练权重按其模型卡使用
 CC-BY-NC 许可；OmniVoice 代码为 Apache-2.0。TranslateGemma 遵循 Gemma
 Terms of Use 和 Gemma Prohibited Use Policy，包括其中第 3.2 节限制。
-Qwen3.6 和 Qwen3 Embedding 使用 Apache-2.0。
+Qwen3.6、Qwen3 Embedding 和 Qwen3 Reranker 使用 Apache-2.0。
 许可证、模型作者信息和 Notice 位于 app 的 Contents/Resources/ThirdParty；
 模型权重未改动。Python 及依赖的许可保留在各自 dist-info 和标准库内。
 
 完整性
 镜像旁的 .sha256 文件记录 DMG 的 SHA-256。可在终端运行：
-shasum -a 256 -c PaperLingo-0.2.0-macOS-arm64-offline.dmg.sha256
+shasum -a 256 -c PaperLingo-0.2.3-macOS-arm64-offline.dmg.sha256
+
+传输建议
+镜像超过 4 GB，U 盘或移动硬盘请使用 APFS 或 exFAT；FAT32 无法保存。
+可通过 AirDrop、局域网或移动硬盘复制 DMG 和旁边的 .sha256 文件。

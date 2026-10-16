@@ -74,7 +74,9 @@ open dist/PaperLingo.app
 
 ### 安装完整离线包
 
-如果你已取得单独分发的 `PaperLingo-0.1.0-macOS-arm64-offline.dmg`，双击后把 app 拖到「应用程序」。该版本包含 Python、Ollama 和 v0.1 翻译、语音模型，无需开发工具或再次下载模型。v0.2 已构建并在本机验证含全部模型的自包含 app，可将整个 `PaperLingo.app` 复制到「应用程序」；当前没有发布新的完整 DMG 镜像。自行构建请参阅 [离线打包指南](docs/DISTRIBUTION.md)。
+完整离线包单独分发，文件名为 `PaperLingo-0.2.3-macOS-arm64-offline.dmg`，约 **25.01 GB**。它包含 Python、Ollama，以及翻译、语音、论文摘要、向量检索和重排模型，无需开发工具或再次下载模型。双击 DMG，把 app 拖到「应用程序」，复制完成后推出镜像，再从「应用程序」启动。完整研究功能建议 32 GB 或以上内存，安装时预留至少 60 GB 磁盘空间。自行构建请参阅 [离线打包指南](docs/DISTRIBUTION.md)。
+
+镜像超过 4 GB，传输用的移动硬盘或 U 盘请使用 APFS / exFAT，或通过 AirDrop、局域网传输。此前的 v0.1 离线包不含研究模型。GitHub Release 仍提供源码与说明，不托管这个完整模型镜像。
 
 当前离线包采用 ad-hoc 签名，未做 Apple Developer ID 公证。首次若被 macOS 拦截，请按 [安装与迁移说明](packaging/INSTALL-zh.txt) 在「隐私与安全性」中允许打开。仓库的源码 ZIP 不是可直接安装的 app。
 

@@ -34,6 +34,8 @@ needed=2*size+2*1024**3
 if shutil.disk_usage(stage).free<needed:
     raise SystemExit(f'DMG creation needs at least {needed/1024**3:.1f} GiB free; staged app preserved.')
 PY
-hdiutil create -volname "PaperLingo $VERSION Offline" -srcfolder "$STAGE" -ov -format UDZO -imagekey zlib-level=1 "$DMG"
+# LZFSE is supported by the app's macOS 14+ target and avoids slow zlib
+# compression when the distribution contains tens of gigabytes of weights.
+hdiutil create -volname "PaperLingo $VERSION Offline" -srcfolder "$STAGE" -ov -format ULFO -puppetstrings "$DMG"
 (cd "$PROJECT_ROOT/dist" && shasum -a 256 "$(basename "$DMG")" > "$(basename "$DMG").sha256")
 echo "Built offline image: $DMG"

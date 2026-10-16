@@ -7,6 +7,7 @@ Notable changes are recorded here. Version numbers follow `MAJOR.MINOR.PATCH`; v
 ### Added
 
 - Native selection popovers for PDF and web readers, with translation, speech, slow speech, sentence translation, copy and personal notes. Translations appear beside the selection and work in focus mode.
+- Locally built full offline DMG with all research, retrieval, translation and speech models, updated installation instructions and checksum verification. Use LZFSE compression for the macOS 14+ target; the model image is distributed separately from GitHub source archives.
 
 ### Changed
 
