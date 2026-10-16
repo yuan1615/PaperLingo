@@ -32,6 +32,15 @@ dist/
 
 `PAPERLINGO_CLONE_STAGE=1` 在 macOS/APFS 上优先以独立的写时复制文件暂存大模型和大运行库，不创建指向项目的链接；原项目删除或移动后，暂存 app 的文件仍独立存在。不支持克隆时回退到普通复制，空间预检仍按完整逻辑体积计算。
 
+主程序使用原子写入，最终签名后再以相同字节刷新为新文件。若通过 APFS 克隆自行安装，可在启动前执行以下操作后验证签名；脚本不修改签名内容，也不关闭系统安全检查：
+
+```bash
+APP=/Applications/PaperLingo.app
+python3 scripts/replace-executable.py \
+  "$APP/Contents/MacOS/PaperLingo" "$APP/Contents/MacOS/PaperLingo"
+codesign --verify --deep --strict "$APP"
+```
+
 脚本拒绝覆盖已有分发 app 中的 `Runtime/`。重新构建前先把旧 `dist/PaperLingo-0.2.1-Offline/` 整体移到其他目录保存，再执行脚本，避免混用旧资源。
 
 ## 搬迁检查

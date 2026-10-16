@@ -13,6 +13,8 @@
     "two_1024d_vectors": true,
     "no_page_vectors": true,
     "no_source_body_fts": true,
-    "raw_evidence_retained": true
+    "raw_evidence_retained": true,
+    "latest_evidence_version": true,
+    "omni_ten_experiments": true
   }
 }

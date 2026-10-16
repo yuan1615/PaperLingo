@@ -147,7 +147,7 @@ struct ResearchLibraryScreen: View {
                 }
             }
             if store.extractingLibrary {
-                Label("正在为已有论文建立正文关键词索引…", systemImage: "doc.text.magnifyingglass").font(.system(size: 10))
+                Label("正在提取已有论文的原文证据…", systemImage: "doc.text.magnifyingglass").font(.system(size: 10))
                     .foregroundStyle(Palette.muted)
             }
             if !store.searchMessage.isEmpty {

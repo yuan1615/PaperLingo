@@ -14,6 +14,7 @@ PAPERLINGO_APP_DIR="$APP_DIR" bash scripts/build-app.sh
 PYTHONDONTWRITEBYTECODE=1 "$PROJECT_ROOT/.runtime/venv/bin/python" scripts/prepare-offline.py "$PROJECT_ROOT" "$APP_DIR"
 # Sign the final resource tree after all paths, models and notices are in place.
 codesign --force --deep --sign "${PAPERLINGO_SIGN_IDENTITY:--}" "$APP_DIR"
+python3 "$PROJECT_ROOT/scripts/replace-executable.py" "$APP_DIR/Contents/MacOS/PaperLingo" "$APP_DIR/Contents/MacOS/PaperLingo"
 codesign --verify --deep --strict "$APP_DIR"
 cp packaging/INSTALL-zh.txt "$STAGE/安装说明.txt"
 ln -s /Applications "$STAGE/Applications"

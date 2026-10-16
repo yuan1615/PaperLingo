@@ -17,6 +17,7 @@ Notable changes are recorded here. Version numbers follow `MAJOR.MINOR.PATCH`; v
 - Index each paper once using its AI overview, title, classification and personal notes. Remove page-level vectors and source-text search indexing; keep original sources for reading and evidence verification.
 - Fuse keyword/vector candidates and locally rerank papers, reject weak matches, and show title/manual-record fallback when an overview is missing.
 - Automatically back up schema upgrades and reclaim retired index storage where SQLite locks permit.
+- Atomically replace native executable files while preserving signed bytes; verify normal relaunches after the observed initial installation wait.
 
 Validation scope and limitations are documented in [v0.2.1 verification](docs/VERIFICATION_V0.2.1.md).
 

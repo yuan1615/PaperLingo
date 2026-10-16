@@ -1,0 +1,14 @@
+{
+  "passed": true,
+  "strict_bundle_signature_verified": true,
+  "verified_normal_relaunches": 2,
+  "ui_ready_ms": [
+    916,
+    1155
+  ],
+  "measurement_scope": "CUA getApp observation, excluding tool/network approval wait; not cold initial install timing",
+  "initial_installation_loader_wait_observed": true,
+  "atomic_executable_copy_verified": true,
+  "system_security_settings_changed": false,
+  "executable_sha256": "b18e9f173c1c6937a64bb15a9d8be7cfa382f718604ac87dcb47c23cc42f99d3"
+}

@@ -13,7 +13,7 @@ bash scripts/build-app.sh
 open dist/PaperLingo.app
 ```
 
-脚本构建 release 二进制、生成 macOS app bundle、复制资源并进行 ad-hoc 签名。不要用 `swift run PaperLingo` 代替正式 app 启动，系统通知需要 bundle 身份。
+脚本构建 release 二进制、生成 macOS app bundle、复制资源并进行 ad-hoc 签名。主程序通过 `replace-executable.py` 写入新文件再原子替换；签名后再做一次字节不变的文件替换，减少原地覆写可执行文件的风险。新安装时曾观察到较长的系统加载等待，尚未完全确定系统原因；后续两次常规重开已通过。复制/安装 app 后如采用 APFS 克隆，也可对主程序运行此脚本；完整签名校验仍须通过。不要用 `swift run PaperLingo` 代替正式 app 启动，系统通知需要 bundle 身份。
 
 开发版 `runtime.json` 指向当前项目的绝对 `.runtime/` 路径，因此移动项目后需重新构建。完整离线版采用不同的可重定位资源布局，见 [分发指南](DISTRIBUTION.md)。
 
