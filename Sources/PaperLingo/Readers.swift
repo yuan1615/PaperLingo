@@ -16,6 +16,8 @@ struct PDFReader: NSViewRepresentable {
         view.backgroundColor=NSColor(red:0.94,green:0.94,blue:0.92,alpha:1)
         view.document=PDFDocument(url:url)
         context.coordinator.view=view
+        context.coordinator.selectionPopover.attach(to: view)
+        context.coordinator.selectionPopover.selectionSettled = { [weak coordinator = context.coordinator] in coordinator?.selectionChanged() }
         context.coordinator.observe(view)
         if let page=view.document?.page(at:paper.page) { view.go(to:page) }
         return view
@@ -45,6 +47,7 @@ struct PDFReader: NSViewRepresentable {
     }
     static func dismantleNSView(_ view:PDFView,coordinator:Coordinator) {
         coordinator.work?.cancel()
+        coordinator.selectionPopover.invalidate()
         coordinator.observers.forEach(NotificationCenter.default.removeObserver)
         coordinator.observers.removeAll()
         coordinator.view=nil
@@ -57,7 +60,8 @@ struct PDFReader: NSViewRepresentable {
         var query=""
         var observers:[NSObjectProtocol]=[]
         var work:DispatchWorkItem?
-        init(store:AppStore,paper:Paper) { self.store=store; self.paper=paper }
+        let selectionPopover: SelectionPopoverController
+        init(store:AppStore,paper:Paper) { self.store=store; self.paper=paper; selectionPopover = SelectionPopoverController(store: store) }
         func observe(_ view: PDFView) {
             observers.append(NotificationCenter.default.addObserver(forName:.PDFViewSelectionChanged,object:view,queue:.main) { [weak self] _ in
                 Task { @MainActor in self?.selectionChanged() }
@@ -71,11 +75,18 @@ struct PDFReader: NSViewRepresentable {
         }
         func selectionChanged() {
             work?.cancel()
+            if NSEvent.pressedMouseButtons & 1 != 0 { selectionPopover.dismiss(); return }
             let next=DispatchWorkItem { [weak self] in
-                guard let self,self.store.route == .reading,self.store.selectedPaperID == self.paper.id,
-                      let selection=self.view?.currentSelection,let text=selection.string,!text.isEmpty,let page=selection.pages.first else { return }
+                guard let self,self.store.route == .reading,self.store.selectedPaperID == self.paper.id, let view = self.view else { return }
+                guard let selection=view.currentSelection,let text=selection.string,!TextTools.clean(text).isEmpty,let page=selection.pages.first else {
+                    self.selectionPopover.dismiss(); self.store.clearSelection(); return
+                }
                 let index=self.view?.document?.index(for:page) ?? 0
                 self.store.updateSelection(text,context:TextTools.context(in:page.string ?? text,selection:text),page:index)
+                let line = selection.selectionsByLine().last ?? selection
+                if let endPage = line.pages.last {
+                    self.selectionPopover.show(anchoredTo: view.convert(line.bounds(for: endPage), from: endPage))
+                }
             }
             work=next; DispatchQueue.main.asyncAfter(deadline:.now()+0.18,execute:next)
         }
@@ -97,11 +108,14 @@ struct TextReader: NSViewRepresentable {
         view.textContainer?.widthTracksTextView=true; view.textContainer?.lineFragmentPadding=0
         view.delegate=context.coordinator; scroll.documentView=view
         context.coordinator.view=view; update(view,coordinator:context.coordinator)
+        context.coordinator.selectionPopover.attach(to: view)
+        context.coordinator.selectionPopover.selectionSettled = { [weak coordinator = context.coordinator] in coordinator?.updateSelection() }
         return scroll
     }
     func updateNSView(_ scroll:NSScrollView,context:Context) { if let view=scroll.documentView as? NSTextView { update(view,coordinator:context.coordinator) } }
     static func dismantleNSView(_ scroll:NSScrollView,coordinator:Coordinator) {
         coordinator.selectionTask?.cancel()
+        coordinator.selectionPopover.invalidate()
         coordinator.view?.delegate=nil
         coordinator.view=nil
     }
@@ -126,20 +140,36 @@ struct TextReader: NSViewRepresentable {
         var text="",query=""
         var fontSize:CGFloat=0
         var selectionTask:Task<Void,Never>?
-        init(store:AppStore) { self.store=store }
+        let selectionPopover: SelectionPopoverController
+        init(store:AppStore) { self.store=store; selectionPopover = SelectionPopoverController(store: store) }
         func textViewDidChangeSelection(_ notification:Notification) {
+            updateSelection()
+        }
+        func updateSelection() {
             selectionTask?.cancel()
+            if NSEvent.pressedMouseButtons & 1 != 0 { selectionPopover.dismiss(); return }
             let paperID=store.selectedPaperID
             selectionTask=Task { [weak self] in
                 try? await Task.sleep(for:.milliseconds(120))
                 guard !Task.isCancelled,let self,let view=self.view else {return}
                 let selectedRange=view.selectedRange(),source=view.string
-                guard selectedRange.length>0,let range=Range(selectedRange,in:source) else {return}
+                guard selectedRange.length>0,let range=Range(selectedRange,in:source) else {
+                    self.selectionPopover.dismiss(); self.store.clearSelection(); return
+                }
                 let selected=String(source[range])
                 let context=await Task.detached(priority:.userInitiated) {TextTools.context(in:source,range:selectedRange)}.value
                 guard !Task.isCancelled,self.view?.selectedRange()==selectedRange,
                       self.store.route == .reading,self.store.selectedPaperID == paperID else {return}
                 self.store.updateSelection(selected,context:context,page:0)
+                if let manager = view.layoutManager, let container = view.textContainer {
+                    let glyphs = manager.glyphRange(forCharacterRange: selectedRange, actualCharacterRange: nil)
+                    guard glyphs.length > 0 else { return }
+                    var lastLine = NSRange()
+                    _ = manager.lineFragmentUsedRect(forGlyphAt: glyphs.location + glyphs.length - 1, effectiveRange: &lastLine)
+                    let rect = manager.boundingRect(forGlyphRange: NSIntersectionRange(glyphs, lastLine), in: container)
+                        .offsetBy(dx: view.textContainerOrigin.x, dy: view.textContainerOrigin.y)
+                    self.selectionPopover.show(anchoredTo: rect)
+                }
             }
         }
         deinit {selectionTask?.cancel()}

@@ -4,6 +4,7 @@ import SwiftUI
 
 struct ResearchLibraryScreen: View {
     @ObservedObject var store: AppStore
+    @State private var showingFilters = false
     private var status: String { store.libraryStatusFilter }
     private var category: String { store.libraryCategoryFilter }
     private var tag: String { store.libraryTagFilter }
@@ -32,16 +33,16 @@ struct ResearchLibraryScreen: View {
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            header.padding(22)
+            header.padding(.horizontal, 16).frame(height: 60)
             if store.researchBusy || store.researchError != nil || !store.researchMessage.isEmpty {
-                ResearchProgress(store: store).padding(.horizontal, 22).padding(.bottom, 12)
+                ResearchProgress(store: store).padding(.horizontal, 16).padding(.bottom, 8)
             }
             Rectangle().fill(Palette.line).frame(height: 1)
             GeometryReader { geometry in
                 let compact = geometry.size.width < 850
                 HStack(spacing: 0) {
                     if !compact || store.catalogPaper == nil {
-                        paperList.frame(width: compact ? nil : 310).frame(maxWidth: compact ? .infinity : nil)
+                        paperList.frame(width: compact ? nil : 270).frame(maxWidth: compact ? .infinity : nil)
                     }
                     if !compact { Rectangle().fill(Palette.line).frame(width: 1) }
                     if !compact || store.catalogPaper != nil {
@@ -65,118 +66,99 @@ struct ResearchLibraryScreen: View {
                             }
                         }.frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
-                }
+                }.onAppear { if !compact { selectFirstIfNeeded() } }
+                    .onChange(of: filtered.map(\.id)) { if !compact && !store.searching { selectFirstIfNeeded() } }
+                    .onChange(of: store.searching) { if !compact && !store.searching { selectFirstIfNeeded() } }
+                    .onChange(of: store.libraryQuery) { if compact { store.catalogPaperID = nil } }
             }
         }
+    }
+    private func selectFirstIfNeeded() {
+        if !filtered.contains(where: { $0.id == store.catalogPaperID }) { store.catalogPaperID = filtered.first?.id }
+    }
+    private var activeFilterCount: Int {
+        [status != "全部状态", category != "全部分类", tag != "全部标签", favorites].filter { $0 }.count
     }
     private var header: some View {
-        VStack(alignment: .leading, spacing: 13) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("YOUR RESEARCH LIBRARY").font(.system(size: 9, design: .monospaced)).tracking(2)
-                        .foregroundStyle(Palette.muted)
-                    Text("研究库").font(.system(size: 28, weight: .medium, design: .serif))
-                    Text("记下为什么读，也留住下次用得上的线索。").font(.system(size: 11)).foregroundStyle(Palette.muted)
-                }
-                Spacer()
-                Menu {
-                    Button("导入 PDF…") { store.choosePDF() }
-                    Button("导入链接…") { store.showLink = true }
-                    Divider()
-                    Button("生成尚无前三页摘要的论文") {
-                        store.startResearch(
-                            store.papers.filter {
-                                !PaperSummary.isCurrent(store.digests[$0.id])
-                            })
-                    }
-                    .disabled(store.researchBusy || store.searching)
-                    Button("建立 / 更新全部检索索引") { store.startResearch(store.papers, summarize: false) }.disabled(
-                        store.researchBusy || store.searching)
-                } label: {
-                    Label("导入与整理", systemImage: "plus")
-                }.menuStyle(.borderlessButton).fixedSize().padding(10).background(
-                    Palette.pale, in: RoundedRectangle(cornerRadius: 8))
-            }
-            HStack(spacing: 10) {
+        HStack(spacing: 12) {
+            Button { store.layout.sidebarVisible.toggle() } label: { Image(systemName: "sidebar.left") }
+                .buttonStyle(ReadingButtonStyle()).help("显示或收起导航")
+            Text("研究库").font(.system(size: 20, weight: .medium, design: .serif)).fixedSize()
+            Spacer(minLength: 0)
+            HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass").foregroundStyle(Palette.muted)
-                TextField("搜索论文概览、标题、分类或笔记", text: $store.libraryQuery).textFieldStyle(.plain).onSubmit {
-                    store.searchSemantically()
-                }.onChange(of: store.libraryQuery) { store.searchKeywords() }
+                TextField("搜索摘要、标题或笔记", text: $store.libraryQuery).textFieldStyle(.plain)
+                    .onSubmit { store.searchSemantically() }
+                    .onChange(of: store.libraryQuery) { store.searchKeywords() }
                 if !store.libraryQuery.isEmpty {
-                    Button {
-                        store.libraryQuery = ""
-                        store.searchKeywords()
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                    }.buttonStyle(.plain).foregroundStyle(Palette.muted)
+                    Button { store.libraryQuery = ""; store.searchKeywords() } label: { Image(systemName: "xmark.circle.fill") }
+                        .buttonStyle(.plain).foregroundStyle(Palette.muted).help("清除搜索")
                 }
                 if store.searching { ProgressView().controlSize(.small) }
-                Button("按意思查找") { store.searchSemantically() }.buttonStyle(.bordered).disabled(
-                    store.libraryQuery.isEmpty || store.searching || store.researchBusy)
-            }.font(.system(size: 12)).padding(11).background(.white, in: RoundedRectangle(cornerRadius: 9)).overlay(
-                RoundedRectangle(cornerRadius: 9).stroke(Palette.line, lineWidth: 1))
-            Text("只读 PDF 前三页，生成中文摘要；每篇只用这份摘要建立一个向量。资料和笔记支持关键词检索。").font(.system(size:10)).foregroundStyle(Palette.muted)
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 10) {
-                    filters
-                    Spacer()
-                    sortPicker
-                }
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack { filters }
-                    HStack {
-                        sortPicker
-                        Spacer()
-                    }
-                }
-            }
-            if !store.categories.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 7) {
-                        ForEach(store.categories, id: \.self) { name in
-                            let count = store.papers.filter { store.record(for: $0).category == name }.count
-                            Button {
-                                store.libraryCategoryFilter = category == name ? "全部分类" : name
-                            } label: {
-                                Text("\(name) · \(count)").font(.system(size: 10)).padding(.horizontal, 10).padding(
-                                    .vertical, 6
-                                ).background(category == name ? Palette.pale : .white.opacity(0.7), in: Capsule())
-                            }.buttonStyle(.plain).foregroundStyle(Palette.green)
+                Button { store.searchSemantically() } label: { Image(systemName: "sparkle.magnifyingglass") }
+                    .buttonStyle(ReadingButtonStyle()).help("按意思查找 · 输入后回车")
+                    .accessibilityLabel("按意思查找")
+                    .disabled(store.libraryQuery.isEmpty || store.searching || store.researchBusy)
+            }.font(.system(size: 12)).padding(.leading, 10).padding(.trailing, 3).frame(height: 34)
+                .frame(minWidth: 130, maxWidth: 500).background(.white, in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Palette.line, lineWidth: 1))
+            Button { showingFilters.toggle() } label: {
+                Image(systemName: activeFilterCount > 0 ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+            }.buttonStyle(ReadingButtonStyle()).help("筛选与排序").accessibilityLabel("筛选与排序")
+                .popover(isPresented: $showingFilters, arrowEdge: .bottom) {
+                    VStack(alignment: .leading, spacing: 15) {
+                        HStack {
+                            Text("筛选与排序").font(.system(size: 14, weight: .semibold))
+                            Spacer()
+                            Button("重置") {
+                                store.libraryStatusFilter = "全部状态"; store.libraryCategoryFilter = "全部分类"
+                                store.libraryTagFilter = "全部标签"; store.libraryFavoritesOnly = false; store.librarySort = "最近加入"
+                            }.buttonStyle(.link)
                         }
-                    }
+                        filterForm
+                        Text("\(filtered.count) / \(store.papers.count) 篇论文").font(.system(size: 11)).foregroundStyle(Palette.muted)
+                    }.padding(18).frame(width: 290)
                 }
-            }
-            if !store.searchMessage.isEmpty {
-                Text(store.searchMessage).font(.system(size: 10)).foregroundStyle(Palette.muted).textSelection(.enabled)
-            }
+            Menu {
+                Button("导入 PDF…") { store.choosePDF() }
+                Button("导入链接…") { store.showLink = true }
+                Divider()
+                Button("生成缺失的前三页摘要") { store.startResearch(store.papers.filter { !PaperSummary.isCurrent(store.digests[$0.id]) }) }
+                    .disabled(store.researchBusy || store.searching)
+                Button("更新摘要检索索引") { store.startResearch(store.papers, summarize: false) }.disabled(store.researchBusy || store.searching)
+            } label: { Image(systemName: "plus").frame(width: 28, height: 32).contentShape(Rectangle()) }
+                .menuStyle(.borderlessButton).fixedSize().help("导入与批量整理").accessibilityLabel("导入与整理")
         }
     }
-    @ViewBuilder private var filters: some View {
-        Picker("状态", selection: $store.libraryStatusFilter) {
-            Text("全部状态").tag("全部状态")
-            ForEach(ReadingStatus.allCases, id: \.rawValue) { Text($0.rawValue).tag($0.rawValue) }
-        }.labelsHidden().frame(width: 110)
-        Picker("分类", selection: $store.libraryCategoryFilter) {
-            Text("全部分类").tag("全部分类")
-            ForEach(store.categories, id: \.self) { Text($0).tag($0) }
-        }.labelsHidden().frame(width: 120)
-        Picker("标签", selection: $store.libraryTagFilter) {
-            Text("全部标签").tag("全部标签")
-            ForEach(store.allPaperTags, id: \.self) { Text($0).tag($0) }
-        }.labelsHidden().frame(width: 120)
-        Toggle(isOn: $store.libraryFavoritesOnly) { Image(systemName: "star.fill") }.toggleStyle(.button).help("只看收藏")
-    }
-    private var sortPicker: some View {
-        Picker("排序", selection: $store.librarySort) {
-            ForEach(["最近加入", "最近阅读", "发表年份", "标题"], id: \.self) { Text($0).tag($0) }
+    private var filterForm: some View {
+        Form {
+            Picker("阅读状态", selection: $store.libraryStatusFilter) {
+                Text("全部状态").tag("全部状态")
+                ForEach(ReadingStatus.allCases, id: \.rawValue) { Text($0.rawValue).tag($0.rawValue) }
+            }
+            Picker("分类", selection: $store.libraryCategoryFilter) {
+                Text("全部分类").tag("全部分类")
+                ForEach(store.categories, id: \.self) { Text($0).tag($0) }
+            }
+            Picker("标签", selection: $store.libraryTagFilter) {
+                Text("全部标签").tag("全部标签")
+                ForEach(store.allPaperTags, id: \.self) { Text($0).tag($0) }
+            }
+            Picker("排序", selection: $store.librarySort) {
+                ForEach(["最近加入", "最近阅读", "发表年份", "标题"], id: \.self) { Text($0).tag($0) }
+            }
+            Toggle("只看收藏", isOn: $store.libraryFavoritesOnly)
         }
-        .labelsHidden().frame(width: 115)
     }
     private var paperList: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("\(filtered.count) / \(store.papers.count) 篇 · \(store.researchNotes.count) 条个人记录").font(
                 .system(size: 10)
             ).foregroundStyle(Palette.muted).padding(15)
+            if !store.libraryQuery.isEmpty && !store.searchMessage.isEmpty {
+                Text(store.searchMessage).font(.system(size: 10)).foregroundStyle(Palette.muted).lineLimit(3)
+                    .textSelection(.enabled).padding(.horizontal, 15).padding(.bottom, 10)
+            }
             ScrollView {
                 LazyVStack(spacing: 8) {
                     ForEach(filtered) { paper in
@@ -270,8 +252,6 @@ struct ResearchProgress: View {
             }
             if store.researchBusy {
                 ProgressView(value: store.researchProgress).tint(Palette.green)
-                Text("可继续阅读、关键词检索和写笔记；整理时暂缓翻译与 OmniVoice，系统语音仍可使用。").font(.system(size: 10)).foregroundStyle(
-                    Palette.muted)
             }
             if let error = store.researchError {
                 Text(error).font(.system(size: 11)).foregroundStyle(Palette.orange).textSelection(.enabled)
@@ -314,13 +294,13 @@ struct ResearchCompactStatus: View {
 struct ResearchPaperDetail: View {
     @ObservedObject var store: AppStore
     let paper: Paper
-    @State private var tab = 0
+    @State private var tab = 1
     @State private var noteToDelete: PaperNote?
     init(store: AppStore, paper: Paper) {
         self.store = store
         self.paper = paper
         let source = store.searchHits.first { $0.paperID == paper.id }?.source
-        _tab = State(initialValue: source == "笔记" ? 2 : (["汇总","论文概览","论文摘要"].contains(source ?? "") ? 1 : 0))
+        _tab = State(initialValue: source == "笔记" ? 2 : 1)
     }
     private var notes: [PaperNote] {
         let values = store.researchNotes.filter { $0.paperID == paper.id }
@@ -337,26 +317,18 @@ struct ResearchPaperDetail: View {
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 14) {
-                Text(paper.title).font(.system(size: 23, weight: .medium, design: .serif)).lineLimit(4).textSelection(
-                    .enabled)
-                ViewThatFits(in: .horizontal) {
-                    HStack {
-                        actions
-                        Spacer()
-                        statusPicker
-                    }
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack { actions }
-                        statusPicker
-                    }
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .top, spacing: 10) {
+                    Text(paper.title).font(.system(size: 18, weight: .medium, design: .serif)).lineLimit(2)
+                        .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                    actions
                 }
                 Picker("论文详情", selection: $tab) {
-                    Text("档案").tag(0)
-                    Text("AI 摘要").tag(1)
+                    Text("摘要").tag(1)
                     Text("笔记 \(notes.count)").tag(2)
-                }.pickerStyle(.segmented)
-            }.padding(22)
+                    Text("资料").tag(0)
+                }.pickerStyle(.segmented).labelsHidden().frame(maxWidth: 320)
+            }.padding(.horizontal, 20).padding(.vertical, 12)
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
@@ -369,7 +341,7 @@ struct ResearchPaperDetail: View {
                     case 1: digest
                     default: personalNotes
                     }
-                }.padding(22).frame(maxWidth: .infinity, alignment: .leading)
+                }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
             }
         }.onChange(of: store.digests[paper.id]?.id) { tab = 1 }
             .onChange(of: store.searchHits.first { $0.paperID == paper.id }?.source) {
@@ -395,18 +367,14 @@ struct ResearchPaperDetail: View {
             store.open(paper)
         } label: {
             Label("读原文", systemImage: "doc.text")
-        }.buttonStyle(PrimaryButton())
-        Button {
-            store.newNote(paper)
-        } label: {
-            Image(systemName: "square.and.pencil")
-        }.buttonStyle(ReadingButtonStyle()).help("新建笔记")
-        Button {
-            store.toggleFavorite(paper)
-        } label: {
-            Image(systemName: store.record(for: paper).favorite ? "star.fill" : "star")
-        }.buttonStyle(ReadingButtonStyle()).help("收藏论文")
+        }.buttonStyle(.bordered).controlSize(.small)
         Menu {
+            Button("新建笔记") { store.newNote(paper) }
+            Button(store.record(for: paper).favorite ? "取消收藏" : "收藏论文") { store.toggleFavorite(paper) }
+            Picker("阅读状态", selection: Binding(get: { store.record(for: paper).status }, set: { store.setStatus($0, for: paper) })) {
+                ForEach(ReadingStatus.allCases, id: \.rawValue) { Text($0.rawValue).tag($0) }
+            }
+            Divider()
             Button("编辑文献信息与分类…") { store.metadataEditor = paper }
             Button("导出档案与笔记 Markdown…") { store.exportArchive(paper) }
             Divider()
@@ -416,15 +384,8 @@ struct ResearchPaperDetail: View {
                 store.researchBusy || store.searching)
             Button("移除论文…", role: .destructive) { store.pendingPaperDeletion = paper }
         } label: {
-            Image(systemName: "ellipsis")
+            Image(systemName: "ellipsis").frame(width: 28, height: 32).contentShape(Rectangle())
         }.menuStyle(.borderlessButton).frame(width: 28)
-    }
-    private var statusPicker: some View {
-        Picker(
-            "阅读状态",
-            selection: Binding(get: { store.record(for: paper).status }, set: { store.setStatus($0, for: paper) })
-        ) { ForEach(ReadingStatus.allCases, id: \.rawValue) { Text($0.rawValue).tag($0) } }.labelsHidden().frame(
-            width: 115)
     }
     private var archive: some View {
         let r = store.record(for: paper)
@@ -492,9 +453,9 @@ struct ResearchPaperDetail: View {
     @ViewBuilder private var digest: some View {
         if let digest = store.digests[paper.id] {
             Text(digest.oneLine).font(.system(size: 17, weight: .medium, design: .serif)).lineSpacing(6).textSelection(.enabled)
-            Text("AI 生成 · \(digest.created.formatted(date: .abbreviated, time: .shortened))").font(.system(size: 10)).foregroundStyle(Palette.muted)
-            Text(PaperSummary.isCurrent(digest) ? (paper.kind == "PDF" ? "仅依据前 \(min(3, digest.totalPages)) 页文字（原文件共 \(digest.totalPages) 页）。实验结果为作者在摘要或引言中的报告，未核验后文实验。" : "仅依据网页开头最多 15,000 字符。实验结果为开头内容中的报告。") : "历史摘要：请更新为前三页摘要后再建立向量索引。")
-                .font(.system(size: 11)).foregroundStyle(Palette.muted).lineSpacing(4)
+            Text(PaperSummary.isCurrent(digest) ? (paper.kind == "PDF" ? "前三页摘要 · \(min(3, digest.totalPages)) / \(digest.totalPages) 页" : "网页开头摘要") : "历史摘要 · 可在更多菜单更新")
+                .font(.system(size: 10)).foregroundStyle(Palette.muted)
+                .help("仅依据开头文字，实验结果为作者的报告，未核验后文实验。")
             ForEach(PaperSummary.topics, id: \.rawValue) { topic in
                 VStack(alignment: .leading, spacing: 10) {
                     Text(PaperSummary.title(topic)).font(.system(size: 15, weight: .semibold))
@@ -506,13 +467,16 @@ struct ResearchPaperDetail: View {
                 }.padding(15).frame(maxWidth: .infinity, alignment: .leading)
                     .background(.white.opacity(0.7), in: RoundedRectangle(cornerRadius: 9))
             }
-            if !digest.suggestedCategory.isEmpty {
-                Text("建议分类：" + digest.suggestedCategory + " / " + digest.suggestedTags.joined(separator: " / "))
-                    .font(.system(size: 11)).foregroundStyle(Palette.muted)
-                Button("采用分类与标签") { store.applySuggestions(digest, to: paper) }.buttonStyle(.bordered)
-            }
-            analyzeButton
-            Text(digest.model).font(.system(size: 9, design: .monospaced)).foregroundStyle(Palette.muted)
+            DisclosureGroup("摘要信息与分类建议") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("生成于 \(digest.created.formatted(date: .abbreviated, time: .shortened))").font(.system(size: 10)).foregroundStyle(Palette.muted)
+                    if !digest.suggestedCategory.isEmpty {
+                        Text(digest.suggestedCategory + " / " + digest.suggestedTags.joined(separator: " / "))
+                        Button("采用分类与标签") { store.applySuggestions(digest, to: paper) }.buttonStyle(.bordered)
+                    }
+                    Text(digest.model).font(.system(size: 9, design: .monospaced)).foregroundStyle(Palette.muted)
+                }.font(.system(size: 11)).padding(.top, 8)
+            }.font(.system(size: 11)).foregroundStyle(Palette.muted)
         } else {
             Text("用三页，留住论文的主要思路。").font(.system(size: 20, design: .serif))
             Text("本地模型只阅读 PDF 前三页，按研究动机、核心方法、实验结果生成中文摘要，再用摘要建立每篇唯一的语义索引。网页使用开头的有限正文。没有报告的结果会明确写出。").font(.system(size: 12)).lineSpacing(6).foregroundStyle(Palette.muted)
@@ -570,29 +534,11 @@ struct ResearchPaperDetail: View {
         }
     }
     private func searchMatch(_ hit: ResearchSearchHit) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label("本次检索匹配 · \(hit.source)", systemImage: "magnifyingglass").font(.system(size: 10)).foregroundStyle(
-                Palette.green)
-            Text(hit.snippet).font(.system(size: 12)).lineSpacing(4).textSelection(.enabled)
-            if let page = hit.page {
-                Button(paper.kind == "PDF" ? "查看第 \(page+1) 页" : "查看原文") { store.open(paper, page: page) }.buttonStyle(
-                    .bordered
-                ).font(.system(size: 11))
-            }
-            if hit.matches.count>1 {
-                DisclosureGroup("另有 \(hit.matches.count-1) 处相关证据") {
-                    ForEach(Array(hit.matches.dropFirst())) {match in
-                        VStack(alignment:.leading,spacing:6) {
-                            Text("\(match.source) · \(match.section)").font(.system(size:10)).foregroundStyle(Palette.muted)
-                            Text(match.snippet).font(.system(size:11)).textSelection(.enabled)
-                            if let page=match.page {Button("打开第 \(page+1) 页"){store.open(paper,page:page)}.buttonStyle(.bordered).font(.system(size:10))}
-                        }.padding(.vertical,6)
-                    }
-                }.font(.system(size:11))
-            }
-        }.padding(14).frame(maxWidth: .infinity, alignment: .leading).background(
-            Palette.pale, in: RoundedRectangle(cornerRadius: 10))
+        DisclosureGroup("查看检索关联 · " + hit.source) {
+            Text(hit.snippet).font(.system(size: 12)).lineSpacing(4).textSelection(.enabled).padding(.top, 8)
+        }.font(.system(size: 10)).foregroundStyle(Palette.green)
     }
+
 }
 
 struct ResearchNoteEditor: View {
@@ -644,7 +590,7 @@ struct ResearchNoteEditor: View {
             }
         }.padding(24).frame(width: 620, height: 620).background(Palette.cream).interactiveDismissDisabled()
             .onAppear { store.hasUnsavedResearchEdits = draft != original }
-            .onChange(of: draft) { store.hasUnsavedResearchEdits = $0 != original }
+            .onChange(of: draft) { _, value in store.hasUnsavedResearchEdits = value != original }
             .onDisappear { if store.noteEditor == nil { store.hasUnsavedResearchEdits = false } }
             .confirmationDialog("放弃未保存的笔记修改？", isPresented: $discard, titleVisibility: .visible) {
                 Button("放弃修改", role: .destructive) { store.noteEditor = nil }
@@ -716,7 +662,7 @@ struct ResearchMetadataEditor: View {
             }
         }.padding(24).frame(width: 600, height: 600).background(Palette.cream).interactiveDismissDisabled()
             .onAppear { store.hasUnsavedResearchEdits = hasChanges }
-            .onChange(of: hasChanges) { store.hasUnsavedResearchEdits = $0 }
+            .onChange(of: hasChanges) { _, value in store.hasUnsavedResearchEdits = value }
             .onDisappear { if store.metadataEditor == nil { store.hasUnsavedResearchEdits = false } }
             .confirmationDialog("放弃未保存的档案修改？", isPresented: $discard, titleVisibility: .visible) {
                 Button("放弃修改", role: .destructive) { store.metadataEditor = nil }
@@ -735,7 +681,7 @@ struct ResearchModelSettings: View {
     @ObservedObject var engines: EngineManager
     var body: some View {
         VStack(alignment: .leading, spacing: 15) {
-            Label("前三页摘要与检索 · v0.2.2", systemImage: "books.vertical").font(.system(size: 14, weight: .semibold))
+            Label("前三页摘要与检索 · v0.2.3", systemImage: "books.vertical").font(.system(size: 14, weight: .semibold))
             row("整理 · Qwen3.6 27B Q4", status: engines.analysisStatus, ready: engines.analysisReady)
             row("检索 · Qwen3 Embedding 0.6B", status: engines.embeddingStatus, ready: engines.embeddingReady)
             row("相关性复核 · Qwen3 Reranker 0.6B",status:engines.rerankerReady ? "已就绪 · 本机重排":"尚未就绪；需安装模型并重启本地引擎",ready:engines.rerankerReady)

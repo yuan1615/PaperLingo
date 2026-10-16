@@ -2,6 +2,21 @@
 
 Notable changes are recorded here. Version numbers follow `MAJOR.MINOR.PATCH`; v0.x releases may change behavior and data formats.
 
+## [0.2.3] - 2026-10-16
+
+### Added
+
+- Native selection popovers for PDF and web readers, with translation, speech, slow speech, sentence translation, copy and personal notes. Translations appear beside the selection and work in focus mode.
+
+### Changed
+
+- Replace the research library's stacked banners and always-visible filters with a compact search toolbar. Move filters and sorting into a popover, and make summaries the default paper detail.
+- Remove the duplicated paper list from library navigation, shorten detail headers, collapse search excerpts and summary metadata, and retain a list/detail switch for narrow windows.
+- Show selection actions after mouse release; dismiss them on scrolling, resizing, outside clicks or Escape without moving the document.
+- Retain the first-three-page summary pipeline, model weights and database schema 4.
+
+Interaction design and manual verification: [v0.2.3 layout](docs/V0.2.3_LAYOUT.md).
+
 ## [0.2.2] - 2026-10-16
 
 ### Changed

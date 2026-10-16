@@ -147,7 +147,7 @@ enum Route: String, CaseIterable { case reading = "阅读空间", library="研�
     }
     func updateSelection(_ text: String, context: String, page: Int) {
         let cleaned=TextTools.clean(text)
-        guard !cleaned.isEmpty, cleaned != selection || page != selectedPage else { return }
+        guard !cleaned.isEmpty, cleaned != selection || page != selectedPage || context != self.context else { return }
         selectionVersion=UUID(); selection=cleaned; self.context=context; selectedPage=page; translation=""; lookupSaved=false
     }
     func clearSelection() { selectionVersion=UUID(); selection=""; context=""; translation=""; lookupSaved=false }

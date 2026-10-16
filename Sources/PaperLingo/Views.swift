@@ -26,7 +26,8 @@ struct RootView:View {
     init(store:AppStore) { self.store=store; self.layout=store.layout }
     var body:some View {
         GeometryReader { geometry in
-        let sidebarWidth = min(222.0,max(184.0,geometry.size.width * 0.17))
+        let sidebarWidth = store.route == .library ? 190.0 : min(222.0,max(184.0,geometry.size.width * 0.17))
+        let compactChrome = store.route == .library || (store.route == .reading && store.selectedPaper != nil)
         let sidebarShown = layout.sidebarVisible && !(layout.focused && store.route == .reading)
         HStack(spacing:0) {
             Sidebar(store:store).frame(width:sidebarWidth).frame(width:sidebarShown ? sidebarWidth : 0).clipped().allowsHitTesting(sidebarShown).accessibilityHidden(!sidebarShown)
@@ -38,8 +39,8 @@ struct RootView:View {
                     Spacer()
                     Text(Date(),format:.dateTime.month(.wide).day().weekday(.wide)).font(.system(size:11)).foregroundStyle(Palette.muted)
                     Text("LOCAL FIRST").font(.system(size:9,weight:.bold,design:.monospaced)).tracking(1).foregroundStyle(Palette.green).padding(.horizontal,9).padding(.vertical,5).background(Palette.pale,in:Capsule())
-                }.padding(.horizontal,20).frame(height:54).frame(height:store.route == .reading && store.selectedPaper != nil ? 0 : 54).clipped().allowsHitTesting(!(store.route == .reading && store.selectedPaper != nil)).accessibilityHidden(store.route == .reading && store.selectedPaper != nil)
-                Rectangle().fill(Palette.line).frame(height:store.route == .reading && store.selectedPaper != nil ? 0 : 1)
+                }.padding(.horizontal,20).frame(height:54).frame(height:compactChrome ? 0 : 54).clipped().allowsHitTesting(!compactChrome).accessibilityHidden(compactChrome)
+                Rectangle().fill(Palette.line).frame(height:compactChrome ? 0 : 1)
                 Group {
                     switch store.route {
                     case .reading: ReadingSpace(store:store)
@@ -94,6 +95,7 @@ struct Sidebar:View {
                 nav(.vocabulary,icon:"square.stack",count:store.words.count)
                 nav(.review,icon:"sun.max",count:store.dueWords.count)
             }.padding(.horizontal,13)
+            if store.route != .library {
             HStack { Text("我的论文").font(.system(size:10,weight:.semibold)).foregroundStyle(Palette.muted); Spacer(); Button { store.choosePDF() } label:{ Image(systemName:"plus").font(.system(size:13)) }.buttonStyle(ReadingButtonStyle()).help("导入 PDF ⌘O") }.padding(.horizontal,23).padding(.top,35).padding(.bottom,12)
             ScrollView {
                 LazyVStack(alignment:.leading,spacing:3) {
@@ -114,12 +116,15 @@ struct Sidebar:View {
                     if store.papers.isEmpty { Text("导入你的第一篇论文，\n从一个陌生的词开始。").font(.system(size:11)).foregroundStyle(Palette.muted).lineSpacing(5).padding(.horizontal,10).padding(.top,3) }
                 }.padding(.horizontal,13)
             }
+            }
             Spacer(minLength:16)
+            if store.route != .library {
             VStack(alignment:.leading,spacing:9) {
                 HStack { Image(systemName:"sparkle"); Text("每天，前进一步").fontWeight(.medium) }.font(.system(size:11))
                 Text("从真实阅读中积累，\n用 10 分钟让表达留下来。").font(.system(size:10)).foregroundStyle(Palette.muted).lineSpacing(4)
                 HStack { Text("今日已练习"); Spacer(); Text("\(store.reviewedToday)").fontWeight(.semibold) }.font(.system(size:10)).padding(.top,4)
             }.padding(15).frame(maxWidth:.infinity,alignment:.leading).background(Palette.pale.opacity(0.7),in:RoundedRectangle(cornerRadius:12)).padding(.horizontal,17).padding(.bottom,19)
+            }
             nav(.settings,icon:"slider.horizontal.3",count:nil).padding(.horizontal,13).padding(.bottom,18)
         }.background(Color(red:0.96,green:0.965,blue:0.95))
     }
@@ -494,7 +499,7 @@ struct SettingsScreen:View {
                     HStack {Button("打开数据目录"){NSWorkspace.shared.open(store.dataURL)};Button("导出词库、档案与笔记…"){store.exportBackup()}}.buttonStyle(.bordered).font(.system(size:11))
                     Text("JSON 包含词条、论文档案、个人笔记与最新摘要，不含 PDF、完整日志或检索向量；完整备份请退出应用后复制整个数据目录。目前不支持 JSON 导入。").font(.system(size:10)).foregroundStyle(Palette.muted)
                 }
-                HStack {Text("PaperLingo 0.2.2 · macOS 原生应用");Spacer();Text("Keep reading. Keep growing.").font(.system(size:11,design:.serif))}.font(.system(size:10)).foregroundStyle(Palette.muted).padding(.bottom,10)
+                HStack {Text("PaperLingo 0.2.3 · macOS 原生应用");Spacer();Text("Keep reading. Keep growing.").font(.system(size:11,design:.serif))}.font(.system(size:10)).foregroundStyle(Palette.muted).padding(.bottom,10)
             }.padding(32).frame(maxWidth:980).frame(maxWidth:.infinity)
         }.task{await engines.check()}.onChange(of:hour){Task{await store.reminders.schedule(store.words)}}.onChange(of:minute){Task{await store.reminders.schedule(store.words)}}.onChange(of:speechProvider){store.audio.stop()}
     }
