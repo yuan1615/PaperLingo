@@ -21,18 +21,18 @@ PAPERLINGO_CLONE_STAGE=1 PAPERLINGO_STAGE_ONLY=1 bash scripts/package-offline.sh
 
 ```text
 dist/
-  PaperLingo-0.2.0-Offline/
+  PaperLingo-0.2.1-Offline/
     PaperLingo.app
     Applications -> /Applications
     安装说明.txt
     Notice
-  PaperLingo-0.2.0-macOS-arm64-offline.dmg
-  PaperLingo-0.2.0-macOS-arm64-offline.dmg.sha256
+  PaperLingo-0.2.1-macOS-arm64-offline.dmg
+  PaperLingo-0.2.1-macOS-arm64-offline.dmg.sha256
 ```
 
 `PAPERLINGO_CLONE_STAGE=1` 在 macOS/APFS 上优先以独立的写时复制文件暂存大模型和大运行库，不创建指向项目的链接；原项目删除或移动后，暂存 app 的文件仍独立存在。不支持克隆时回退到普通复制，空间预检仍按完整逻辑体积计算。
 
-脚本拒绝覆盖已有分发 app 中的 `Runtime/`。重新构建前先把旧 `dist/PaperLingo-0.2.0-Offline/` 整体移到其他目录保存，再执行脚本，避免混用旧资源。
+脚本拒绝覆盖已有分发 app 中的 `Runtime/`。重新构建前先把旧 `dist/PaperLingo-0.2.1-Offline/` 整体移到其他目录保存，再执行脚本，避免混用旧资源。
 
 ## 搬迁检查
 
@@ -43,7 +43,7 @@ PAPERLINGO_STAGE_ONLY=1 bash scripts/package-offline.sh
 
 # 将整个 app 完整复制到另一个目录，路径可包含空格
 mkdir -p /tmp/paperlingo-relocated
-cp -R dist/PaperLingo-0.2.0-Offline/PaperLingo.app /tmp/paperlingo-relocated/
+cp -R dist/PaperLingo-0.2.1-Offline/PaperLingo.app /tmp/paperlingo-relocated/
 
 # 用搬迁后 app 自己的 Python 校验权重、导入、MPS 和真实推理
 APP=/tmp/paperlingo-relocated/PaperLingo.app
@@ -55,14 +55,14 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 \
 # 确认资源签名未被推理改写，再从原分发目录制作镜像
 codesign --verify --deep --strict "$APP"
 PAPERLINGO_IMAGE_ONLY=1 bash scripts/package-offline.sh
-hdiutil verify dist/PaperLingo-0.2.0-macOS-arm64-offline.dmg
+hdiutil verify dist/PaperLingo-0.2.1-macOS-arm64-offline.dmg
 ```
 
 校验 SHA-256 时需先进入校验文件所在目录：
 
 ```bash
 cd dist
-shasum -a 256 -c PaperLingo-0.2.0-macOS-arm64-offline.dmg.sha256
+shasum -a 256 -c PaperLingo-0.2.1-macOS-arm64-offline.dmg.sha256
 ```
 
 上述检查不替代目标物理机器上的验收。`--smoke` 会启动专用回环端口上的引擎，结束时停止自己创建的服务；不操作用户学习数据库。
@@ -79,7 +79,7 @@ shasum -a 256 -c PaperLingo-0.2.0-macOS-arm64-offline.dmg.sha256
 
 默认签名为本机 ad-hoc，未做 Apple Developer ID 公证。`PAPERLINGO_SIGN_IDENTITY` 可指定签名身份，但它不自动配置 hardened runtime、notarization 或 stapling；正式商业分发需要另行验证完整签名流程及模型许可。
 
-此前 v0.1 离线镜像约 6.5 GB；v0.2 新增约 18.1 GB 研究模型，当前未生成或验收新的完整镜像。脚本从 Info.plist 读取版本，不会覆盖旧 v0.1 分发目录；模型不齐全时拒绝打包，下载中的 partial 文件不入包。阶段副本与压缩镜像需要大量额外空间，脚本会在复制和压缩前分别预检。不要将 DMG、模型或 Python 环境提交到 Git；GitHub 单个 Release asset 也有尺寸限制，完整镜像需使用合适的独立分发渠道或另行设计可校验的分卷方案。GitHub Releases 中的源码归档不能直接双击安装。参考 [GitHub 大文件与 Release 文档](https://docs.github.com/en/repositories/working-with-files/managing-large-files/about-large-files-on-github)。
+此前 v0.1 离线镜像约 6.5 GB；v0.2.1 研究、向量与重排模型共新增约 19.3 GB。本轮构建和验证自包含 app，未生成新的完整 DMG。脚本从 Info.plist 读取版本，不会覆盖旧分发目录；模型不齐全时拒绝打包，下载中的 partial 文件不入包。阶段副本与压缩镜像需要大量额外空间，脚本会在复制和压缩前分别预检。不要将 DMG、模型或 Python 环境提交到 Git；GitHub 单个 Release asset 也有尺寸限制，完整镜像需使用合适的独立分发渠道或另行设计可校验的分卷方案。GitHub Releases 中的源码归档不能直接双击安装。参考 [GitHub 大文件与 Release 文档](https://docs.github.com/en/repositories/working-with-files/managing-large-files/about-large-files-on-github)。
 
 ## 用户安装与数据迁移
 

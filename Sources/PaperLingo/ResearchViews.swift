@@ -99,7 +99,7 @@ struct ResearchLibraryScreen: View {
             }
             HStack(spacing: 10) {
                 Image(systemName: "magnifyingglass").foregroundStyle(Palette.muted)
-                TextField("标题、作者、标签、笔记，或用一句话描述你要找的论文", text: $store.libraryQuery).textFieldStyle(.plain).onSubmit {
+                TextField("搜索论文概览、标题、分类或笔记", text: $store.libraryQuery).textFieldStyle(.plain).onSubmit {
                     store.searchSemantically()
                 }.onChange(of: store.libraryQuery) { store.searchKeywords() }
                 if !store.libraryQuery.isEmpty {
@@ -115,6 +115,7 @@ struct ResearchLibraryScreen: View {
                     store.libraryQuery.isEmpty || store.searching || store.researchBusy)
             }.font(.system(size: 12)).padding(11).background(.white, in: RoundedRectangle(cornerRadius: 9)).overlay(
                 RoundedRectangle(cornerRadius: 9).stroke(Palette.line, lineWidth: 1))
+            Text("每篇论文一个索引，以 AI 概览为主；原文与实验表保留供阅读核对。").font(.system(size:10)).foregroundStyle(Palette.muted)
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 10) {
                     filters
@@ -323,7 +324,7 @@ struct ResearchPaperDetail: View {
         self.store = store
         self.paper = paper
         let source = store.searchHits.first { $0.paperID == paper.id }?.source
-        _tab = State(initialValue: source == "笔记" ? 2 : (source == "汇总" ? 1 : 0))
+        _tab = State(initialValue: source == "笔记" ? 2 : (["汇总","论文概览"].contains(source ?? "") ? 1 : (source == "实验记录" ? 3:0)))
     }
     private var notes: [PaperNote] {
         let values = store.researchNotes.filter { $0.paperID == paper.id }
@@ -356,7 +357,8 @@ struct ResearchPaperDetail: View {
                 }
                 Picker("论文详情", selection: $tab) {
                     Text("档案").tag(0)
-                    Text("AI 汇总").tag(1)
+                    Text("实验与证据").tag(3)
+                    Text("AI 概览").tag(1)
                     Text("笔记 \(notes.count)").tag(2)
                 }.pickerStyle(.segmented)
             }.padding(22)
@@ -370,6 +372,7 @@ struct ResearchPaperDetail: View {
                     switch tab {
                     case 0: archive
                     case 1: digest
+                    case 3: experimentalRecords
                     default: personalNotes
                     }
                 }.padding(22).frame(maxWidth: .infinity, alignment: .leading)
@@ -377,7 +380,7 @@ struct ResearchPaperDetail: View {
         }.onChange(of: store.digests[paper.id]?.id) { tab = 1 }
             .onChange(of: store.searchHits.first { $0.paperID == paper.id }?.source) {
                 if let source = store.searchHits.first(where: { $0.paperID == paper.id })?.source {
-                    if source == "笔记" { tab = 2 } else if source == "汇总" { tab = 1 }
+                    if source == "笔记" { tab = 2 } else if source == "汇总" { tab = 1 } else if source == "实验记录" {tab=3}
                 }
             }
             .confirmationDialog(
@@ -456,15 +459,18 @@ struct ResearchPaperDetail: View {
             if let status = store.textStatuses[paper.id] {
                 Label(
                     status.chunkCount == 0
-                        ? "未提取到文字；扫描件需先 OCR" : "\(status.totalPages) 页 · \(status.chunkCount) 个可检索原文片段",
+                        ? "未提取到文字；扫描件需先 OCR" : "\(status.totalPages) 页原文已保存 · 每篇一个概览索引",
                     systemImage: status.chunkCount == 0 ? "doc.viewfinder" : "doc.text.magnifyingglass"
                 ).font(.system(size: 11)).foregroundStyle(Palette.muted)
             }
             Divider()
+            if let ledger=store.ledgers[paper.id] {
+                Button("查看实验记录与原文证据（\(ledger.experiments.filter{$0.kind == .experiment}.count)）"){tab=3}.buttonStyle(.bordered)
+            }
             if let digest = store.digests[paper.id] {
                 Text(digest.isPartial == true ? "阶段概览 · 全文尚未完成" : "一句话回顾").font(.system(size: 14, weight: .semibold))
                 Text(digest.oneLine).font(.system(size: 13)).lineSpacing(5).textSelection(.enabled)
-                Button(digest.isPartial == true ? "查看阶段概览与证据" : "查看完整 AI 汇总与证据") { tab = 1 }.buttonStyle(.bordered)
+                Button(digest.isPartial == true ? "查看阶段概览与证据" : "查看 AI 概览与证据") { tab = 1 }.buttonStyle(.bordered)
             } else {
                 Text("还没有 AI 汇总").font(.system(size: 14, weight: .semibold))
                 Text("整理会提取研究问题、方法、贡献和局限，并保留可回到原文的证据。个人笔记与手工资料会单独保留。").font(.system(size: 12)).foregroundStyle(
@@ -510,8 +516,7 @@ struct ResearchPaperDetail: View {
                 }
                 Spacer()
             }
-            Text(
-                "已处理含文字的 \(digest.processedPages) 页 / 原文件共 \(digest.totalPages) 页；仅分析文字层，未解读图片或图表。下面的摘录已匹配原文，对结论的解释仍需你核实。"
+            Text(digest.pipeline == ResearchModels.structuredVersion ? "基于已保存的实验记录和 \(digest.processedPages) 页重点证据生成；原文件共 \(digest.totalPages) 页。全部文字另存供检索，未逐段交给大模型，未解读图片。指标直接取自实验记录，请核对表头、条件及解释。" : "旧版分层汇总：已处理含文字的 \(digest.processedPages) 页 / 原文件共 \(digest.totalPages) 页；仅分析文字层，未解读图片或图表。可重新整理生成结构化记录。"
             ).font(
                 .system(size: 10)
             ).foregroundStyle(Palette.muted).lineSpacing(4)
@@ -522,6 +527,9 @@ struct ResearchPaperDetail: View {
             if digest.rejectedEvidence > 0 {
                 Text("本次丢弃了 \(digest.rejectedEvidence) 条无法与原文匹配的引用。缺少证据的要点未显示。").font(.system(size: 10))
                     .foregroundStyle(Palette.orange)
+            }
+            if let rejected=digest.rejectedFields,rejected>0 {
+                Text("\(rejected) 个字段或定位需要进一步核对，已保留可匹配部分与完整原文；详见实验记录。").font(.system(size:10)).foregroundStyle(Palette.orange)
             }
             VStack(alignment: .leading, spacing: 10) {
                 Text("建议分类：\(digest.suggestedCategory.isEmpty ? "未明确" : digest.suggestedCategory)").font(
@@ -574,10 +582,65 @@ struct ResearchPaperDetail: View {
         } else {
             VStack(alignment: .leading, spacing: 16) {
                 Text("把全文整理成下次读得懂的线索。").font(.system(size: 20, design: .serif))
-                Text("Qwen3.6 在本机按原文分段整理，不覆盖个人笔记。首次整理需加载大模型；可取消，完成的分段会缓存供重试使用。").font(.system(size: 12)).lineSpacing(6)
+                Text("先保存实验表、条件和原文证据，再提取结构化字段，最后生成概览。全文用于检索，重点证据交给本机模型；个人笔记独立保留，可取消后继续。").font(.system(size: 12)).lineSpacing(6)
                     .foregroundStyle(Palette.muted)
                 analyzeButton
             }
+        }
+    }
+    @ViewBuilder private var experimentalRecords:some View {
+        if let ledger=store.ledgers[paper.id] {
+            let experiments=ledger.experiments.filter{$0.kind == .experiment}
+            VStack(alignment:.leading,spacing:16) {
+                Text("先留证据，再写概览").font(.system(size:20,design:.serif))
+                Text("全文保留 \(ledger.evidence.count) 份证据块；识别 \(experiments.count) 项实验、\(ledger.experiments.filter{$0.kind == .dataProfile}.count) 项数据资料。模型已提取 \(experiments.filter(\.extracted).count)/\(experiments.count) 项实验字段，实际提供 \(ledger.analyzedEvidenceIDs.count) 份重点证据。未提取项目仍可展开完整原文。").font(.system(size:11)).foregroundStyle(Palette.muted).lineSpacing(4)
+                Text("数值按原文复制并匹配证据，尚未自动验证复杂表格的行列对应。请核对数据集、指标、方法和条件；空缺表示该证据未明确提供。").font(.system(size:11)).foregroundStyle(Palette.orange).lineSpacing(4)
+                if ledger.experiments.isEmpty {Text("没有自动识别到实验表或明确的实验段落。原文仍可检索，也可选取关键结果保存个人笔记。").font(.system(size:12))}
+                ForEach(ledger.experiments) { record in
+                    VStack(alignment:.leading,spacing:12) {
+                        HStack(alignment:.top) {
+                            Text(record.title).font(.system(size:13,weight:.semibold)).textSelection(.enabled)
+                            Spacer()
+                            Toggle("已核对",isOn:Binding(get:{store.experimentReviews[record.id]?.reviewed ?? false},set:{ value in
+                                var review=store.experimentReviews[record.id] ?? ExperimentReview(paperID:paper.id,experimentID:record.id)
+                                review.reviewed=value;store.saveExperimentReview(review)
+                            })).toggleStyle(.checkbox).font(.system(size:10)).fixedSize()
+                        }
+                        if record.kind == .dataProfile {
+                            Label("数据资料 · 不作为实验效果",systemImage:"tray.full").font(.system(size:11)).foregroundStyle(Palette.muted)
+                        } else {
+                            if !record.extracted {Text("原文已保存，模型字段尚未完成；可继续整理。").font(.system(size:11)).foregroundStyle(Palette.orange)}
+                            meta("数据集",record.dataset);meta("任务",record.task);meta("指标",record.metrics.joined(separator:", "))
+                            meta("实验条件",record.conditions);meta("局限",record.limitations)
+                            if !record.measurements.isEmpty {Text("以下为代表数值，完整表格和其他指标保留在原文证据中。").font(.system(size:10)).foregroundStyle(Palette.muted)}
+                            ForEach(record.measurements) {row in
+                                VStack(alignment:.leading,spacing:5) {
+                                    Text("\(row.method) · \(row.metric) = \(row.value)").font(.system(size:12,weight:.medium,design:.monospaced)).textSelection(.enabled)
+                                    if !row.condition.isEmpty {Text(row.condition).font(.system(size:11)).foregroundStyle(Palette.muted).textSelection(.enabled)}
+                                    Text(row.quote).font(.system(size:11,design:.serif)).foregroundStyle(Palette.muted).textSelection(.enabled)
+                                }.padding(10).frame(maxWidth:.infinity,alignment:.leading).background(Palette.pale,in:RoundedRectangle(cornerRadius:7))
+                            }
+                            if record.measurements.isEmpty && record.extracted {Text("未保存可核对的代表数值；完整表格保留在下方原文中。").font(.system(size:11)).foregroundStyle(Palette.muted)}
+                            if record.rejectedFields>0 {Text("已留空或剔除 \(record.rejectedFields) 个无法按原文匹配的字段，请展开证据核对。").font(.system(size:10)).foregroundStyle(Palette.orange)}
+                        }
+                        ForEach(record.evidenceIDs,id:\.self) {id in
+                            if let source=ledger.evidence.first(where:{$0.id == id}) {
+                                DisclosureGroup("完整原文证据 · 第 \(source.page+1) 页") {
+                                    Text(source.text).font(.system(size:11,design:.monospaced)).lineSpacing(3).textSelection(.enabled).padding(.vertical,8)
+                                    HStack {
+                                        Button("打开原文核对"){store.open(paper,page:source.page)}.buttonStyle(.bordered)
+                                        Button("记录想法或疑问") {store.noteEditor=PaperNote(paperID:paper.id,title:record.title,quote:source.text,page:source.page)}.buttonStyle(.bordered)
+                                    }.font(.system(size:11))
+                                }.font(.system(size:11)).foregroundStyle(Palette.green)
+                            }
+                        }
+                    }.padding(16).background(.white.opacity(0.8),in:RoundedRectangle(cornerRadius:10))
+                }
+                analyzeButton
+            }
+        } else {
+            Text("点击整理后，会先提取并保存实验记录和原文证据。").font(.system(size:12)).foregroundStyle(Palette.muted)
+            analyzeButton
         }
     }
     private var personalNotes: some View {
@@ -639,6 +702,17 @@ struct ResearchPaperDetail: View {
                 Button(paper.kind == "PDF" ? "查看第 \(page+1) 页" : "查看原文") { store.open(paper, page: page) }.buttonStyle(
                     .bordered
                 ).font(.system(size: 11))
+            }
+            if hit.matches.count>1 {
+                DisclosureGroup("另有 \(hit.matches.count-1) 处相关证据") {
+                    ForEach(Array(hit.matches.dropFirst())) {match in
+                        VStack(alignment:.leading,spacing:6) {
+                            Text("\(match.source) · \(match.section)").font(.system(size:10)).foregroundStyle(Palette.muted)
+                            Text(match.snippet).font(.system(size:11)).textSelection(.enabled)
+                            if let page=match.page {Button("打开第 \(page+1) 页"){store.open(paper,page:page)}.buttonStyle(.bordered).font(.system(size:10))}
+                        }.padding(.vertical,6)
+                    }
+                }.font(.system(size:11))
             }
         }.padding(14).frame(maxWidth: .infinity, alignment: .leading).background(
             Palette.pale, in: RoundedRectangle(cornerRadius: 10))
@@ -785,10 +859,11 @@ struct ResearchModelSettings: View {
     @ObservedObject var engines: EngineManager
     var body: some View {
         VStack(alignment: .leading, spacing: 15) {
-            Label("论文整理与检索 · v0.2", systemImage: "books.vertical").font(.system(size: 14, weight: .semibold))
+            Label("实验记录与检索 · v0.2.1", systemImage: "books.vertical").font(.system(size: 14, weight: .semibold))
             row("整理 · Qwen3.6 27B Q4", status: engines.analysisStatus, ready: engines.analysisReady)
             row("检索 · Qwen3 Embedding 0.6B", status: engines.embeddingStatus, ready: engines.embeddingReady)
-            Text("针对 M2 Pro / 32 GB：新增模型约 18.1 GB。大模型整理时会暂停本应用的发音服务，完成或取消后恢复；可继续阅读、写笔记和关键词检索。").font(.system(size: 11))
+            row("相关性复核 · Qwen3 Reranker 0.6B",status:engines.rerankerReady ? "已就绪 · 本机重排":"尚未就绪；需安装模型并重启本地引擎",ready:engines.rerankerReady)
+            Text("针对 M2 Pro / 32 GB：研究与重排模型共约 19.3 GB。大模型整理时暂停本应用的语音与重排服务，完成或取消后恢复；可继续阅读、写笔记和关键词检索。").font(.system(size: 11))
                 .foregroundStyle(Palette.muted).lineSpacing(5)
             HStack {
                 if !engines.bundled {

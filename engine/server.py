@@ -16,6 +16,7 @@ MODEL = None
 LOCK = threading.Lock()
 LOAD_ERROR = None
 ARGS = None
+RERANKER = None
 REQUESTS = {}
 REQUEST_LOCK = threading.Lock()
 
@@ -146,14 +147,16 @@ class Handler(BaseHTTPRequestHandler):
         import importlib.util
         available = importlib.util.find_spec("omnivoice") is not None
         self.json_response(200, {"service": "paperlingo-omnivoice", "protocol": 2, "installed": available,
-                                 "loaded": MODEL is not None, "busy": LOCK.locked(), "error": LOAD_ERROR})
+                                 "loaded": MODEL is not None, "busy": LOCK.locked(), "error": LOAD_ERROR,
+                                 "reranker_installed": bool(getattr(ARGS,"reranker","") and (Path(ARGS.reranker)/"model.safetensors").is_file()),
+                                 "reranker_loaded": RERANKER is not None})
 
     def event(self, payload):
         self.wfile.write(json.dumps(payload, ensure_ascii=False).encode() + b"\n")
         self.wfile.flush()
 
     def do_POST(self):
-        if self.path not in ("/speak", "/speak/stream", "/cancel"):
+        if self.path not in ("/speak", "/speak/stream", "/cancel", "/rerank"):
             self.json_response(404, {"error": "Not found"})
             return
         if self.headers.get("Origin") or self.headers.get("Content-Type", "").split(";")[0] != "application/json":
@@ -161,11 +164,17 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
-            if not 1 <= length <= 65536:
+            if not 1 <= length <= (524288 if self.path == "/rerank" else 65536):
                 raise ValueError("Request must be 1–65536 bytes")
             payload = json.loads(self.rfile.read(length))
             if not isinstance(payload, dict):
                 raise ValueError("Expected a JSON object")
+            if self.path == "/rerank":
+                query=payload.get("query");documents=payload.get("documents")
+                if not isinstance(query,str) or not 1 <= len(query.strip()) <= 1000 or not isinstance(documents,list) or not 1 <= len(documents) <= 32 or not all(isinstance(d,str) and 1 <= len(d) <= 4000 for d in documents):
+                    raise ValueError("Invalid reranking query or documents")
+                self.rerank(query,documents)
+                return
             if self.path in ("/cancel", "/speak/stream"):
                 identifier = str(uuid.UUID(payload.get("request_id", "")))
                 cancelled = request_event(identifier)
@@ -237,6 +246,25 @@ class Handler(BaseHTTPRequestHandler):
             with REQUEST_LOCK:
                 REQUESTS.pop(identifier, None)
 
+    def rerank(self, query, documents):
+        global RERANKER
+        try:
+            path=getattr(ARGS,"reranker","")
+            if not path or not (Path(path)/"model.safetensors").is_file():
+                raise RuntimeError("Local reranker is not installed")
+            with LOCK:
+                if RERANKER is None:
+                    from rerank import LocalReranker
+                    RERANKER=LocalReranker(path)
+                scores=RERANKER.score(query,documents)
+            self.json_response(200,{"scores":scores,"model":"Qwen3-Reranker-0.6B","revision":"e61197ed45024b0ed8a2d74b80b4d909f1255473"})
+        except (BrokenPipeError,ConnectionResetError):
+            pass
+        except Exception as exc:
+            import traceback
+            traceback.print_exc()
+            self.json_response(503,{"error":str(exc)})
+
 
 def main():
     global ARGS
@@ -244,6 +272,7 @@ def main():
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--model", default="k2-fsa/OmniVoice")
     parser.add_argument("--cache", required=True)
+    parser.add_argument("--reranker", default="")
     ARGS = parser.parse_args()
     Path(ARGS.cache).mkdir(parents=True, exist_ok=True)
     server = ThreadingHTTPServer(("127.0.0.1", ARGS.port), Handler)

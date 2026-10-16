@@ -41,3 +41,10 @@ The OmniVoice snapshot contains Boson AI's Higgs Audio V2 tokenizer. Its communi
 - Dependency versions are recorded in [engine/requirements.txt](engine/requirements.txt). Building an offline app preserves the Python and Ollama license files alongside their binaries.
 
 The offline distribution includes [Notice](packaging/third-party/Notice). Model weights are bundled without modification. Before redistributing a model-containing build, review the included third-party terms; the complete v0.1.0 model bundle is intended for personal, noncommercial learning.
+
+## Qwen3 Reranker 0.6B
+
+- Official repository: https://huggingface.co/Qwen/Qwen3-Reranker-0.6B
+- Pinned revision: `e61197ed45024b0ed8a2d74b80b4d909f1255473`
+- License: Apache-2.0; model card and license are under `packaging/third-party/`.
+- Weight SHA-256: `27cd75a405b9c1b46b59abfd88aaa209e6fed2a1972cde9b70e7659537c5e65b`.

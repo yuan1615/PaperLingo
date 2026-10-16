@@ -16,3 +16,5 @@ This product includes the unmodified Boson AI Higgs Audio V2 tokenizer distribut
 PaperLingo v0.2 research models: Qwen3.6-27B (Copyright 2026 Alibaba Cloud) and Qwen3-Embedding-0.6B, by Qwen / Alibaba Cloud, under the Apache License 2.0. See Qwen3.6-27B-LICENSE.txt and Qwen3-Embedding-0.6B-LICENSE.txt.
 Official models: https://huggingface.co/Qwen/Qwen3.6-27B and https://huggingface.co/Qwen/Qwen3-Embedding-0.6B.
 Ollama variants: qwen3.6:27b-q4_K_M and qwen3-embedding:0.6b. Weights are packaged without application-side modification. Actual model versions and file hashes are recorded in distribution.json.
+
+Qwen3-Reranker-0.6B (Qwen), Apache-2.0. Revision e61197ed45024b0ed8a2d74b80b4d909f1255473. Model card and license are included.

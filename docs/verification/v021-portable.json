@@ -1,0 +1,31 @@
+{
+  "app": "Self-contained PaperLingo.app, relocated from project runtime",
+  "passed": true,
+  "checks": {
+    "verified_weight_files": 17,
+    "python": "3.11.17",
+    "torch": "2.8.0",
+    "mps": true,
+    "embedded_imports": true,
+    "translation": {
+      "text": "一个健壮的模型应该能够泛化到训练数据之外。",
+      "seconds": 3.251
+    },
+    "progressive_audio": [
+      {
+        "index": 1,
+        "received_s": 11.656,
+        "duration_s": 3.28
+      },
+      {
+        "index": 2,
+        "received_s": 22.995,
+        "duration_s": 4.08
+      }
+    ],
+    "reranking_scores": [
+      0.7512365579605103,
+      0.00223979027941823
+    ]
+  }
+}

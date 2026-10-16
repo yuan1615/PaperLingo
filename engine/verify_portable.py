@@ -86,7 +86,8 @@ def verify(app, work, smoke=False):
                         'PYTHONNOUSERSITE':'1','NO_PROXY':'127.0.0.1,localhost','NUMBA_CACHE_DIR':str(work/'numba-cache')})
             commands=[([str(runtime/'bin/ollama'),'serve'],'ollama'),
                       ([str(runtime/'venv/bin/python'),str(resources/'engine/server.py'),'--port',str(voice_port),
-                        '--model',str(runtime/'models/OmniVoice'),'--cache',str(work/'audio-cache')],'voice')]
+                        '--model',str(runtime/'models/OmniVoice'),'--cache',str(work/'audio-cache'),
+                        '--reranker',str(runtime/'models/Qwen3-Reranker-0.6B')],'voice')]
             for command,name in commands:
                 handle=(work/f'{name}.log').open('wb');handles.append(handle)
                 processes.append(subprocess.Popen(command,env=env,stdout=handle,stderr=handle))
@@ -126,6 +127,12 @@ def verify(app, work, smoke=False):
                     if event['type']=='done':done=True
             assert done and len(clips)>=2 and clips[0]['received_s']<clips[-1]['received_s']
             checks['progressive_audio']=clips
+            with request(voice_port,'/rerank',{'query':'缩短英文长句的首段语音等待','documents':[
+                    'Streaming text-to-speech plays the first synthesized clause immediately to reduce initial audio latency.',
+                    'A convolutional image classifier predicts photographic categories.']}) as response:
+                scores=json.load(response)['scores']
+            assert scores[0]>0.25 and scores[1]<0.25,'Reranker failed relevance check'
+            checks['reranking_scores']=scores
         report['passed']=True
     except Exception as error:
         report['error']=str(error)

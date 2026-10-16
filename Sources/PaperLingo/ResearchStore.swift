@@ -5,9 +5,9 @@ import PaperCore
 import UniformTypeIdentifiers
 
 enum ResearchDocumentLoader {
-    static func extract(paper: Paper, url: URL) async throws -> (chunks: [PaperTextChunk], status: PaperTextStatus) {
+    static func extract(paper: Paper, url: URL) async throws -> (chunks: [PaperTextChunk], status: PaperTextStatus, evidence:[ResearchEvidence]) {
         let worker = Task.detached(priority: .utility) {
-            () throws -> (chunks: [PaperTextChunk], status: PaperTextStatus) in
+            () throws -> (chunks: [PaperTextChunk], status: PaperTextStatus, evidence:[ResearchEvidence]) in
             try Task.checkCancellation()
             var pages: [String] = []
             if paper.kind == "PDF" {
@@ -22,11 +22,12 @@ enum ResearchDocumentLoader {
                 pages = [try String(contentsOf: url, encoding: .utf8)]
             }
             let chunks = ResearchText.chunks(paperID: paper.id, pages: pages)
-            let status = PaperTextStatus(
+            var status = PaperTextStatus(
                 paperID: paper.id, sourceHash: ResearchText.hash(pages.joined(separator: "\u{001E}")),
                 totalPages: pages.count, textPages: pages.filter { !TextTools.clean($0).isEmpty }.count,
                 chunkCount: chunks.count)
-            return (chunks, status)
+            status.extractionVersion=ResearchStructure.indexVersion
+            return (chunks, status, ResearchStructure.sources(paperID:paper.id,pages:pages))
         }
         return try await withTaskCancellationHandler(
             operation: { try await worker.value }, onCancel: { worker.cancel() })
@@ -44,7 +45,7 @@ extension AppStore {
     var categories: [String] { Array(Set(papers.map { record(for: $0).category }.filter { !$0.isEmpty })).sorted() }
     var allPaperTags: [String] { Array(Set(records.values.flatMap(\.tags))).sorted() }
     var embeddingSignature: String {
-        ResearchModels.embedding + "@" + (engines.modelDigests[ResearchModels.embedding] ?? "unavailable")
+        ResearchModels.embedding + "@" + (engines.modelDigests[ResearchModels.embedding] ?? "unavailable") + "|" + ResearchStructure.indexVersion
     }
     func record(for paper: Paper) -> PaperRecord { records[paper.id] ?? PaperRecord(paperID: paper.id) }
     func showArchive(_ paper: Paper) {
@@ -160,40 +161,44 @@ extension AppStore {
                 await engines.check()
                 guard engines.embeddingReady else { throw AppError.message("检索模型尚未安装；可先使用关键词，或到设置安装研究模型。") }
                 let signature = embeddingSignature
-                let chunks = try db?.chunks() ?? []
-                guard chunks.contains(where: { $0.vectorModel == signature && !$0.vector.isEmpty }) else {
+                var units = try db?.passages() ?? []
+                let updates=Array(units.filter{$0.source != "正文" && $0.semanticEligible && ($0.vectorModel != signature || $0.vector.isEmpty)}.prefix(32))
+                if !updates.isEmpty {
+                    searchMessage="正在更新变动的论文概览索引…"
+                    for offset in stride(from:0,to:updates.count,by:8) {
+                        var batch=Array(updates[offset..<min(offset+8,updates.count)])
+                        let vectors=try await researchClient.embeddings(batch.map(\.embeddingInput))
+                        try Task.checkCancellation()
+                        for i in batch.indices {batch[i].vector=vectors[i]}
+                        try db?.savePassageVectors(batch,model:signature)
+                    }
+                    units=try db?.passages() ?? []
+                }
+                guard units.contains(where: { $0.vectorModel == signature && !$0.vector.isEmpty }) else {
                     throw AppError.message("尚未建立当前模型的语义索引，请点击「建立检索索引」。关键词检索已经可用。")
                 }
                 let vector = try await researchClient.embeddings([query], query: true)[0]
                 try Task.checkCancellation()
-                let semantic = await Task.detached(priority: .userInitiated) {
-                    ResearchText.semanticHits(query: vector, chunks: chunks, model: signature)
-                }.value
+                let lexical = try db?.lexicalPassages(query) ?? []
+                let candidates = await Task.detached(priority:.userInitiated) {ResearchRetrieval.candidates(query:vector,units:units,model:signature,lexical:lexical)}.value
                 try Task.checkCancellation()
-                let lexical = try db?.keywordSearch(query) ?? []
-                var combined: [String: ResearchSearchHit] = [:]
-                for (rank, hit) in semantic.enumerated() {
-                    var hit = hit
-                    hit.score = 1.0 / Double(40 + rank)
-                    combined[hit.paperID] = hit
-                }
-                for (rank, hit) in lexical.enumerated() {
-                    if var existing = combined[hit.paperID] {
-                        existing.score += 1.0 / Double(40 + rank)
-                        existing.source = "语义 + 关键词"
-                        combined[hit.paperID] = existing
-                    } else {
-                        var hit = hit
-                        hit.score = 1.0 / Double(40 + rank)
-                        combined[hit.paperID] = hit
-                    }
-                }
+                searchMessage="正在本机复核候选论文的相关性…"
+                var scores:[Double]?
+                do {scores=try await researchClient.rerank(query:query,documents:candidates.map(\.passage.embeddingInput))}
+                catch is CancellationError {throw CancellationError()}
+                catch {scores=nil}
+                try Task.checkCancellation()
                 guard TextTools.clean(libraryQuery) == query else {
                     if !Task.isCancelled { searching = false }
                     return
                 }
-                searchHits = combined.values.sorted { $0.score > $1.score }
-                searchMessage = "\(semantic.count) 篇有语义索引的论文参与检索；其余内容仍可用关键词查找。相似度不代表结论正确。"
+                searchHits=ResearchRetrieval.hits(candidates:candidates,relevance:scores,query:query)
+                let indexed=Set(units.filter{$0.vectorModel == signature && !$0.vector.isEmpty}.map(\.paperID)).count
+                let pending=units.filter{$0.semanticEligible && ($0.vectorModel != signature || $0.vector.isEmpty)}.count
+                searchMessage = scores == nil ? "重排服务未就绪，当前显示通过阈值的论文候选；可检查本地引擎。\(indexed)/\(papers.count) 篇有当前语义索引。" : "\(indexed)/\(papers.count) 篇参与语义检索，每篇一个概览索引。\(searchHits.isEmpty ? "没有找到足够相关的论文。":"候选已由本机重排模型复核，可查看概览了解关联。")"
+                if pending>0 {searchMessage += " 仍有 \(pending) 篇待更新，可点击建立 / 更新检索索引。"}
+                let missing=papers.filter{digests[$0.id] == nil}.count
+                if missing>0 {searchMessage += " \(missing) 篇尚无 AI 概览，暂按标题和手工资料检索；整理后可提高效果。"}
             } catch is CancellationError {} catch {
                 if !Task.isCancelled {
                     searchMessage = error.localizedDescription
@@ -204,20 +209,24 @@ extension AppStore {
         }
     }
     func ensureText(_ paper: Paper, force: Bool = false) async throws -> [PaperTextChunk] {
-        if !force, textStatuses[paper.id] != nil { return try db?.chunks(paperID: paper.id) ?? [] }
+        if !force, textStatuses[paper.id]?.extractionVersion == ResearchStructure.indexVersion,ledgers[paper.id]?.version == ResearchStructure.version { return try db?.chunks(paperID: paper.id) ?? [] }
         let extracted = try await ResearchDocumentLoader.extract(paper: paper, url: fileURL(paper))
         try Task.checkCancellation()
         guard papers.contains(where: { $0.id == paper.id }) else { throw CancellationError() }
         try db?.replaceChunks(paperID: paper.id, chunks: extracted.chunks, status: extracted.status)
         textStatuses[paper.id] = extracted.status
+        if ledgers[paper.id]?.sourceHash != extracted.status.sourceHash || ledgers[paper.id]?.version != ResearchStructure.version {
+            let ledger=ResearchLedger(paperID:paper.id,sourceHash:extracted.status.sourceHash,totalPages:extracted.status.totalPages,evidence:extracted.evidence,model:ResearchModels.analysis)
+            try db?.saveLedger(ledger);ledgers[paper.id]=ledger
+        }
         return try db?.chunks(paperID: paper.id) ?? []
     }
     func indexLibraryText() {
         guard !extractingLibrary, !researchBusy else { return }
-        guard papers.contains(where: { textStatuses[$0.id] == nil }) else { return }
+        guard papers.contains(where: { textStatuses[$0.id]?.extractionVersion != ResearchStructure.indexVersion || ledgers[$0.id]?.version != ResearchStructure.version }) else { return }
         extractingLibrary = true
         textIndexTask = Task {
-            for paper in papers where textStatuses[paper.id] == nil {
+            for paper in papers where textStatuses[paper.id]?.extractionVersion != ResearchStructure.indexVersion || ledgers[paper.id]?.version != ResearchStructure.version {
                 if Task.isCancelled || researchBusy { break }
                 do { _ = try await ensureText(paper) } catch {
                     if !Task.isCancelled { researchError = "正文索引：\(paper.title) · \(error.localizedDescription)" }
@@ -287,21 +296,21 @@ extension AppStore {
                 for (number, paper) in targets.enumerated() {
                     try Task.checkCancellation()
                     researchPaperID = paper.id
-                    let chunks = try db?.chunks(paperID: paper.id) ?? []
-                    let pending = chunks.filter { $0.vectorModel != signature || $0.vector.isEmpty }
-                    for offset in stride(from: 0, to: pending.count, by: 4) {
+                    let units = try db?.passages(paperID: paper.id) ?? []
+                    let pending = units.filter { $0.semanticEligible && ($0.vectorModel != signature || $0.vector.isEmpty) }
+                    for offset in stride(from: 0, to: pending.count, by: 8) {
                         try Task.checkCancellation()
-                        let batch = Array(pending[offset..<min(offset + 4, pending.count)])
-                        researchMessage = "\(number+1)/\(targets.count) · 检索索引 \(offset)/\(pending.count) 段"
-                        let vectors = try await researchClient.embeddings(batch.map(\.text))
-                        var updates: [PaperTextChunk] = []
+                        let batch = Array(pending[offset..<min(offset + 8, pending.count)])
+                        researchMessage = "\(number+1)/\(targets.count) · 更新论文概览索引"
+                        let vectors = try await researchClient.embeddings(batch.map(\.embeddingInput))
+                        var updates: [ResearchPassage] = []
                         for (chunk, vector) in zip(batch, vectors) {
                             var item = chunk
                             item.vector = vector
                             updates.append(item)
                         }
-                        try db?.saveVectors(updates, model: signature)
-                        let fraction = Double(min(offset + 4, pending.count)) / Double(max(1, pending.count))
+                        try db?.savePassageVectors(updates, model: signature)
+                        let fraction = Double(min(offset + 8, pending.count)) / Double(max(1, pending.count))
                         let overall = (Double(number) + fraction) / Double(targets.count)
                         let indexScale: Double = summarize ? 0.2 : 1
                         let indexBase: Double = summarize ? 0.8 : 0
@@ -344,89 +353,65 @@ extension AppStore {
     )
         async throws -> PaperDigest
     {
-        var partials: [DigestDraft] = []
-        let groups = stride(from: 0, to: chunks.count, by: 3).map { Array(chunks[$0..<min($0 + 3, chunks.count)]) }
-        for (index, group) in groups.enumerated() {
+        guard var ledger=ledgers[paper.id] else {throw AppError.message("未提取到原文证据")}
+        let started=Date();ledger.model=signature;ledger.modelCalls=0
+        let batches=ResearchStructure.plan(ledger)
+        for (index,sources) in batches.enumerated() {
             try Task.checkCancellation()
-            researchMessage = "整理 \(paper.title) · 第 \(index+1)/\(groups.count) 组原文"
-            let key = ResearchText.hash(
-                ResearchModels.promptVersion + signature + "final=\(groups.count == 1)"
-                    + group.map { $0.id + $0.text }.joined())
-            let draft: DigestDraft
-            if useCache, let cached = try db?.cachedAnalysis(key: key) {
-                draft = cached
-            } else {
-                draft = try await researchClient.draft(chunks: group, categories: categories, final: groups.count == 1)
-                try db?.cacheAnalysis(draft, key: key, paperID: paper.id)
-            }
-            partials.append(draft)
-            if index == 0, groups.count > 1, let status = textStatuses[paper.id] {
-                let existing = digests[paper.id]
-                let needsPreview =
-                    existing == nil
-                    || (existing?.isPartial == true
-                        && (!useCache || existing?.model != signature || existing?.sourceHash != status.sourceHash))
-                if needsPreview {
-                    var preview = draft.grounded(
-                        in: group, paperID: paper.id, model: signature,
-                        sourceHash: status.sourceHash, totalPages: status.totalPages)
-                    if !preview.points.isEmpty {
-                        preview.isPartial = true
-                        try db?.saveDigest(preview)
-                        digests[paper.id] = preview
-                    }
+            researchMessage="提取实验字段与证据 · \(index+1)/\(batches.count) 组"
+            let key=ResearchText.hash(ResearchModels.structuredVersion+signature+sources.map(\.id).joined())
+            let draft:StructuredDraft
+            let cached=useCache ? try db?.cachedStructured(key):nil
+            if let cached {draft=cached}
+            else {
+                let baseline=ledger
+                draft=try await researchClient.extract(sources:sources) { [weak self] partial in
+                    guard let self,!Task.isCancelled else{return}
+                    let saved=partial.applying(to:baseline,sources:sources)
+                    do {
+                        try self.db?.cacheStructured(partial,key:key,paperID:paper.id)
+                        try self.db?.saveLedger(saved);self.ledgers[paper.id]=saved
+                        self.researchMessage="已保存 \(saved.experiments.filter(\.extracted).count)/\(saved.experiments.filter{$0.kind == .experiment}.count) 项实验字段，继续提取…"
+                        self.researchProgress=base+scale*0.8*Double(saved.experiments.filter(\.extracted).count)/Double(max(1,saved.experiments.filter{$0.kind == .experiment}.count))
+                    }catch {self.researchError=error.localizedDescription}
                 }
+                try db?.cacheStructured(draft,key:key,paperID:paper.id)
             }
-            researchProgress = base + scale * 0.75 * Double(index + 1) / Double(groups.count)
+            ledger=draft.applying(to:ledger,sources:sources)
+            if cached != nil {ledger.modelCalls-=1}
+            ledger.elapsedSeconds=Date().timeIntervalSince(started)
+            try db?.saveLedger(ledger);ledgers[paper.id]=ledger
+            researchProgress=base+scale*0.8*Double(index+1)/Double(max(1,batches.count))
         }
-        // Bibliographic suggestions come from the opening source group, so
-        // reference sections processed later cannot replace the paper's identity.
-        let bibliography = partials.first
-        // Reference-only groups may correctly return no findings. They need no
-        // additional consolidation calls and cannot contribute study evidence.
-        partials.removeAll { $0.points.isEmpty }
-        var level = 0
-        var remaining = partials.count
-        var mergeBatches = 0
-        while remaining > 1 {
-            remaining = (remaining + 2) / 3
-            mergeBatches += remaining
-        }
-        var completedBatches = 0
-        while partials.count > 1 {
-            var merged: [DigestDraft] = []
-            level += 1
-            for offset in stride(from: 0, to: partials.count, by: 3) {
+        for attempt in 0..<2 {
+            let pending=ledger.experiments.filter{$0.kind == .experiment && !$0.extracted}
+            guard !pending.isEmpty else{break}
+            try Task.checkCancellation()
+            let ids=Set(pending.flatMap(\.evidenceIDs))
+            var retryLedger=ledger
+            retryLedger.evidence=ledger.evidence.filter{ids.contains($0.id)}
+            researchMessage="补提取剩余 \(pending.count) 项实验 · 第 \(attempt+1) 次"
+            for sources in ResearchStructure.plan(retryLedger) {
                 try Task.checkCancellation()
-                researchMessage = "合并 \(paper.title) · 第 \(level) 层 · 第 \(offset / 3 + 1)/\((partials.count + 2) / 3) 组"
-                let batch = Array(partials[offset..<min(offset + 3, partials.count)])
-                if batch.count == 1 {
-                    merged.append(batch[0])
-                } else {
-                    merged.append(
-                        try await researchClient.draft(
-                            chunks: [], previous: batch, categories: categories, final: partials.count <= 3))
-                }
-                completedBatches += 1
-                researchProgress = base + scale * (0.75 + 0.25 * Double(completedBatches) / Double(max(1, mergeBatches)))
+                let key=ResearchText.hash(ResearchModels.structuredVersion+signature+sources.map(\.id).joined())
+                let draft=try await researchClient.extract(sources:sources)
+                try db?.cacheStructured(draft,key:key,paperID:paper.id)
+                ledger=draft.applying(to:ledger,sources:sources);try db?.saveLedger(ledger);ledgers[paper.id]=ledger
             }
-            partials = merged
+            if ledger.experiments.filter({$0.kind == .experiment && !$0.extracted}).count>=pending.count {break}
         }
-        guard var draft = partials.first, let status = textStatuses[paper.id] else {
-            throw AppError.message("没有可整理的原文内容。")
-        }
-        if let bibliography {
-            draft.title = bibliography.title
-            draft.authors = bibliography.authors
-            draft.year = bibliography.year
-            draft.venue = bibliography.venue
-            draft.doi = bibliography.doi
-            draft.arxiv = bibliography.arxiv
-        }
-        let digest = draft.grounded(
-            in: chunks, paperID: paper.id, model: signature, sourceHash: status.sourceHash,
-            totalPages: status.totalPages)
-        guard !digest.points.isEmpty else { throw AppError.message("模型返回的要点无法与原文摘录核对，本次未覆盖已有汇总。可以重试。") }
+        try Task.checkCancellation()
+        ledger.completed=true;ledger.elapsedSeconds=Date().timeIntervalSince(started)
+        try db?.saveLedger(ledger);ledgers[paper.id]=ledger
+        researchMessage="实验记录已保存 · 生成中文概览"
+        let digest=try await researchClient.summarize(ledger:ledger,categories:categories)
+        ledger.modelCalls+=1;ledger.elapsedSeconds=Date().timeIntervalSince(started)
+        try db?.saveLedger(ledger);ledgers[paper.id]=ledger
+        researchProgress=base+scale
         return digest
+    }
+    func saveExperimentReview(_ review:ExperimentReview) {
+        do {try db?.saveExperimentReview(review);experimentReviews[review.experimentID]=review}
+        catch {self.error=error.localizedDescription}
     }
 }

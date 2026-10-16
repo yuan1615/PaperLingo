@@ -2,7 +2,25 @@
 
 Notable changes are recorded here. Version numbers follow `MAJOR.MINOR.PATCH`; v0.x releases may change behavior and data formats.
 
-## [0.2.0] - Unreleased
+## [0.2.1] - Unreleased
+
+### Added
+
+- Evidence ledger and structured experiment records saved before Chinese overview generation, with source-page links, literal numeric values, independent review status and evidence-based personal notes.
+- Streaming experiment extraction with partial JSON recovery, bounded evidence batches, reusable extraction cache and targeted retries.
+- Pinned local Qwen3 Reranker 0.6B, with CPU/MPS inference and offline packaging/license support.
+- Version 3 JSON export and Markdown exports containing experimental evidence and review state.
+
+### Changed
+
+- Generate an overview from saved records instead of repeated hierarchical merging. A 22-page cold diagnostic took 8m52s and two model calls, compared with the previous approximately 52.6-minute resumed run; timing excludes semantic indexing and is not a general performance guarantee.
+- Index each paper once using its AI overview, title, classification and personal notes. Remove page-level vectors and source-text search indexing; keep original sources for reading and evidence verification.
+- Fuse keyword/vector candidates and locally rerank papers, reject weak matches, and show title/manual-record fallback when an overview is missing.
+- Automatically back up schema upgrades and reclaim retired index storage where SQLite locks permit.
+
+Validation scope and limitations are documented in [v0.2.1 verification](docs/VERIFICATION_V0.2.1.md).
+
+## [0.2.0] - 2026-10-15
 
 ### Added
 

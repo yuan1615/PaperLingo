@@ -31,8 +31,17 @@ extension Database {
             CREATE TABLE IF NOT EXISTS paper_analysis_cache(cache_key TEXT PRIMARY KEY,paper_id TEXT NOT NULL REFERENCES papers(id) ON DELETE CASCADE,payload TEXT NOT NULL);
             CREATE VIRTUAL TABLE IF NOT EXISTS paper_search USING fts5(paper_id UNINDEXED,title,metadata,summary,notes,body,tokenize='unicode61 remove_diacritics 2');
             """)
+        let storedVersion=try rows("SELECT value FROM research_index_meta WHERE key='version'"){text($0,0)}.first
+        if storedVersion != ResearchStructure.indexVersion {
+            try exec("DELETE FROM research_passages; DELETE FROM passage_search; DELETE FROM paper_search;")
+            try exec("UPDATE paper_chunks SET vector='',vector_model='' WHERE vector<>'' OR vector_model<>'';")
+            try write("INSERT INTO research_index_meta VALUES('version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[ResearchStructure.indexVersion])
+            needsIndexCompaction=true
+        }
         let indexed = Set(try rows("SELECT paper_id FROM paper_search") { text($0, 0) })
-        for paper in try papers() where !indexed.contains(paper.id) { try refreshPaperSearch(paper.id) }
+        let passages = Set(try rows("SELECT DISTINCT paper_id FROM research_passages") { text($0,0) })
+        for paper in try papers() where !indexed.contains(paper.id) || !passages.contains(paper.id) { try refreshPaperSearch(paper.id) }
+        try exec("CREATE UNIQUE INDEX IF NOT EXISTS research_one_index_per_paper ON research_passages(paper_id)")
     }
     func encoded<T: Encodable>(_ value: T) throws -> String {
         String(decoding: try JSONEncoder().encode(value), as: UTF8.self)
@@ -208,20 +217,20 @@ extension Database {
             [key, paperID, try encoded(draft)])
     }
     func refreshPaperSearch(_ id: String) throws {
-        guard let paper = try papers().first(where: { $0.id == id }) else { return }
+        guard let paper = try rows("SELECT id,title,filename,kind,source,added,page FROM papers WHERE id=?",[id],map:{s in
+            Paper(id:text(s,0),title:text(s,1),filename:text(s,2),kind:text(s,3),source:text(s,4),added:date(s,5),page:Int(sqlite3_column_int(s,6)))
+        }).first else {return}
         let record = try paperRecord(id)
         let notes = try notes(paperID: id)
         let digest = try digests(paperID: id).first
         let summary = ([digest?.oneLine ?? ""] + (digest?.points.map(\.text) ?? [])).joined(separator: " ")
         let noteText = notes.map { [$0.title, $0.body, $0.quote, $0.kind.rawValue].joined(separator: " ") }.joined(
             separator: "\n")
-        let body = try rows("SELECT text FROM paper_chunks WHERE paper_id=? ORDER BY page,ordinal", [id]) {
-            text($0, 0)
-        }.joined(separator: "\n")
         try write("DELETE FROM paper_search WHERE paper_id=?", [id])
         try write(
             "INSERT INTO paper_search VALUES(?,?,?,?,?,?)",
-            [id, paper.title, record.searchable, summary, noteText, body])
+            [id, paper.title, record.searchable, summary, noteText, ""])
+        try syncPassages(paper,record:record,notes:notes,digest:digest)
     }
     public func keywordSearch(_ query: String, limit: Int = 100) throws -> [ResearchSearchHit] {
         let cleaned = TextTools.clean(query)
@@ -250,12 +259,27 @@ extension Database {
                 [tokens, limit]
             ) { s in
                 ResearchSearchHit(
-                    paperID: text(s, 0), score: 0.5 - sqlite3_column_double(s, 2), snippet: text(s, 1), source: "全文")
+                    paperID: text(s, 0), score: 0.5 - sqlite3_column_double(s, 2), snippet: text(s, 1), source: "论文概览")
             }
             let existing = Set(result.map(\.paperID))
             result += fulltext.filter { !existing.contains($0.paperID) }
         }
+        let unitIDs=Set(try lexicalPassages(cleaned,limit:120))
+        let terms=cleaned.lowercased().split(whereSeparator:{$0.isWhitespace}).map(String.init)
         for index in result.indices {
+            let units=try passages(paperID:result[index].paperID).filter {unit in
+                unitIDs.contains(unit.id) || unit.text.range(of:cleaned,options:.caseInsensitive) != nil
+            }.sorted {a,b in
+                let left=terms.filter{(a.text+" "+a.section).lowercased().contains($0)}.count
+                let right=terms.filter{(b.text+" "+b.section).lowercased().contains($0)}.count
+                if left != right{return left>right}
+                return (a.page ?? -1)<(b.page ?? -1)
+            }
+            if ["正文","全文"].contains(result[index].source),let unit=units.first {
+                result[index].page=unit.page;result[index].source=unit.source;result[index].snippet=ResearchRetrieval.excerpt(unit.text,query:cleaned)
+                result[index].matches=units.prefix(3).map{ResearchMatch(id:$0.id,snippet:ResearchRetrieval.excerpt($0.text,query:cleaned),page:$0.page,source:$0.source,section:$0.section)}
+                continue
+            }
             if ["正文", "全文"].contains(result[index].source),
                 let source = try chunks(paperID: result[index].paperID).first(where: {
                     $0.text.range(of: cleaned, options: .caseInsensitive) != nil
@@ -298,6 +322,22 @@ extension Database {
                         "- \(point.text)", "", "> \(point.quote.replacingOccurrences(of:"\n",with:"\n> "))", "",
                         "来源：第 \(point.page+1) 页。", "",
                     ]
+                }
+            }
+        }
+        if let payload=try rows("SELECT payload FROM paper_ledgers WHERE paper_id=?",[paper.id],map:{text($0,0)}).first {
+            let ledger=try decoded(ResearchLedger.self,payload)
+            let reviews=try experimentReviews()
+            func cell(_ text:String)->String{text.replacingOccurrences(of:"|",with:"\\|").replacingOccurrences(of:"\n",with:" ")}
+            lines += ["","## 结构化实验记录与原文证据","","字段按原文匹配；复杂表格的行列对应仍须人工核对。全文原始证据独立保存，空缺不代表论文未报告。"]
+            for record in ledger.experiments {
+                lines += ["","### \(record.title)","","- 类型：\(record.kind == .dataProfile ? "数据资料（不作为实验效果）":"实验")","- 已提取字段：\(record.extracted ? "是":"否；完整原文已保留")","- 人工核对：\(reviews[record.id]?.reviewed == true ? "已核对":"待核对")","- 数据集：\(record.dataset)","- 任务：\(record.task)","- 指标：\(record.metrics.joined(separator:", "))","- 实验条件：\(record.conditions)","- 局限：\(record.limitations)",""]
+                if !record.measurements.isEmpty {
+                    lines += ["| 方法 / 行 | 指标 | 数值 | 条件 |","| --- | --- | --- | --- |"]
+                    for row in record.measurements {lines.append("| \(cell(row.method)) | \(cell(row.metric)) | \(cell(row.value)) | \(cell(row.condition)) |")}
+                }
+                for id in record.evidenceIDs {
+                    if let source=ledger.evidence.first(where:{$0.id == id}) {lines += ["","> \(source.text.replacingOccurrences(of:"\n",with:"\n> "))","","来源：第 \(source.page+1) 页 · \(source.section)",""]}
                 }
             }
         }

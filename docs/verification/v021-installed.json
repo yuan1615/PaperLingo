@@ -1,0 +1,18 @@
+{
+  "passed": true,
+  "checks": {
+    "papers": true,
+    "vocabulary": true,
+    "lookups": true,
+    "reviews": true,
+    "paper_notes": true,
+    "paper_records": true,
+    "paper_files_and_positions_preserved": true,
+    "schema3": true,
+    "one_index_each": true,
+    "two_1024d_vectors": true,
+    "no_page_vectors": true,
+    "no_source_body_fts": true,
+    "raw_evidence_retained": true
+  }
+}

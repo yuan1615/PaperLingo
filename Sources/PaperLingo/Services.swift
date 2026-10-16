@@ -66,6 +66,7 @@ enum LocalAPI {
     @Published var embeddingReady=false
     @Published var analysisStatus="尚未检查"
     @Published var embeddingStatus="尚未检查"
+    @Published var rerankerReady=false
     var modelDigests:[String:String]=[:]
     private var ollama: Process?
     private var speech: Process?
@@ -103,10 +104,11 @@ enum LocalAPI {
             let data = try await LocalAPI.request(port: 8765, path: "/health")
             let result = try JSONSerialization.jsonObject(with: data) as? [String: Any]
             speechReady = result?["service"] as? String == "paperlingo-omnivoice" && result?["installed"] as? Bool == true && result?["protocol"] as? Int == 2
+            rerankerReady=result?["reranker_installed"] as? Bool == true
             if let failure = result?["error"] as? String { speechReady = false; speechStatus = "加载失败：\(failure)" }
             else if result?["service"] as? String == "paperlingo-omnivoice", result?["protocol"] as? Int != 2 {speechStatus = "语音服务版本较旧，请退出旧版 PaperLingo 后重新启动"}
             else { speechStatus = speechReady ? (result?["loaded"] as? Bool == true ? "模型已载入" : "服务就绪 · 首次播放加载模型") : "OmniVoice 未安装" }
-        } catch { speechReady = false; speechStatus = "未启动" }
+        } catch { speechReady = false; speechStatus = "未启动";rerankerReady=false }
         if translationReady && speechReady {error=nil}
     }
     func start() async {
@@ -128,7 +130,7 @@ enum LocalAPI {
                 let marker=try Data(contentsOf:runtime.appendingPathComponent("models.ready"))
                 let manifest=try JSONSerialization.jsonObject(with:marker) as? [String:String]
                 guard let modelPath=manifest?["omnivoice"],FileManager.default.fileExists(atPath:paths.modelURL(modelPath).path) else {throw AppError.message(bundled ? "安装包中的 OmniVoice 模型不完整，请重新复制完整应用。" : "OmniVoice 模型路径无效，请重新运行安装脚本。")}
-                speech = try launch(runtime.appendingPathComponent("venv/bin/python"), args: [engineScript.path,"--model",paths.modelURL(modelPath).path,"--cache",workDirectory.appendingPathComponent("audio-cache").path], log: "omnivoice.log")
+                speech = try launch(runtime.appendingPathComponent("venv/bin/python"), args: [engineScript.path,"--model",paths.modelURL(modelPath).path,"--cache",workDirectory.appendingPathComponent("audio-cache").path,"--reranker",runtime.appendingPathComponent("models/Qwen3-Reranker-0.6B").path], log: "omnivoice.log")
             }
             for _ in 0..<12 {
                 try await Task.sleep(for: .milliseconds(500))

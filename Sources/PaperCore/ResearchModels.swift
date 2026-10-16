@@ -125,6 +125,8 @@ public struct PaperDigest: Identifiable, Codable, Equatable, Sendable {
     public var points: [DigestPoint]
     public var rejectedEvidence: Int
     public var isPartial: Bool? = nil
+    public var pipeline: String? = nil
+    public var rejectedFields: Int? = nil
 }
 
 public struct DigestDraft: Codable, Sendable {
@@ -179,6 +181,7 @@ public struct ResearchSearchHit: Identifiable, Sendable {
     public var snippet: String
     public var page: Int?
     public var source: String
+    public var matches: [ResearchMatch] = []
     public init(paperID: String, score: Double = 0, snippet: String = "", page: Int? = nil, source: String = "关键词") {
         self.paperID = paperID
         self.score = score
@@ -195,6 +198,7 @@ public struct PaperTextStatus: Codable, Equatable, Sendable {
     public var textPages: Int
     public var chunkCount: Int
     public var created: Date
+    public var extractionVersion: String? = nil
     public init(
         paperID: String, sourceHash: String, totalPages: Int, textPages: Int, chunkCount: Int, created: Date = Date()
     ) {
@@ -211,28 +215,10 @@ public enum ResearchText {
     public static func hash(_ text: String) -> String {
         SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
     }
-    public static func chunks(paperID: String, pages: [String], size: Int = 3200, overlap: Int = 160)
+    public static func chunks(paperID: String, pages: [String], size: Int = 1400, overlap: Int = 140)
         -> [PaperTextChunk]
     {
-        let width = max(100, size)
-        let stride = max(1, max(100, size) - max(0, overlap))
-        var result: [PaperTextChunk] = []
-        for (page, text) in pages.enumerated() {
-            let chars = Array(TextTools.clean(text))
-            var offset = 0
-            var ordinal = 0
-            while offset < chars.count {
-                let end = min(chars.count, offset + width)
-                let content = String(chars[offset..<end])
-                if !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    result.append(PaperTextChunk(paperID: paperID, page: page, ordinal: ordinal, text: content))
-                }
-                if end == chars.count { break }
-                offset += stride
-                ordinal += 1
-            }
-        }
-        return result
+        return ResearchStructure.chunks(paperID:paperID,pages:pages,size:size,overlap:overlap)
     }
     public static func cosine(_ a: [Float], _ b: [Float]) -> Double? {
         guard !a.isEmpty, a.count == b.count else { return nil }

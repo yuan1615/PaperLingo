@@ -492,9 +492,9 @@ struct SettingsScreen:View {
                     Text("论文副本、词库、查询与复习日志均保存在本机。").font(.system(size:12))
                     Text(store.dataURL.path).font(.system(size:10,design:.monospaced)).foregroundStyle(Palette.muted).textSelection(.enabled)
                     HStack {Button("打开数据目录"){NSWorkspace.shared.open(store.dataURL)};Button("导出词库、档案与笔记…"){store.exportBackup()}}.buttonStyle(.bordered).font(.system(size:11))
-                    Text("JSON 包含词条、档案、笔记与最新汇总，不含 PDF、完整日志或检索向量；完整备份请退出应用后复制整个数据目录。目前不支持 JSON 导入。").font(.system(size:10)).foregroundStyle(Palette.muted)
+                    Text("JSON 包含词条、档案、笔记、实验记录、核对状态与最新汇总，不含 PDF、完整日志或检索向量；完整备份请退出应用后复制整个数据目录。目前不支持 JSON 导入。").font(.system(size:10)).foregroundStyle(Palette.muted)
                 }
-                HStack {Text("PaperLingo 0.2 · macOS 原生应用");Spacer();Text("Keep reading. Keep growing.").font(.system(size:11,design:.serif))}.font(.system(size:10)).foregroundStyle(Palette.muted).padding(.bottom,10)
+                HStack {Text("PaperLingo 0.2.1 · macOS 原生应用");Spacer();Text("Keep reading. Keep growing.").font(.system(size:11,design:.serif))}.font(.system(size:10)).foregroundStyle(Palette.muted).padding(.bottom,10)
             }.padding(32).frame(maxWidth:980).frame(maxWidth:.infinity)
         }.task{await engines.check()}.onChange(of:hour){Task{await store.reminders.schedule(store.words)}}.onChange(of:minute){Task{await store.reminders.schedule(store.words)}}.onChange(of:speechProvider){store.audio.stop()}
     }

@@ -10,16 +10,17 @@ public final class Database {
     var handle: OpaquePointer?
     let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
     public private(set) var migrationBackupURL: URL?
+    var needsIndexCompaction=false
     public init(url: URL) throws {
         let existed = FileManager.default.fileExists(atPath:url.path)
         guard sqlite3_open(url.path, &handle) == SQLITE_OK else { throw StorageError.sqlite("无法打开数据库") }
         sqlite3_busy_timeout(handle, 5000)
         let version = try rows("PRAGMA user_version") { Int(sqlite3_column_int($0,0)) }.first ?? 0
-        guard version <= 2 else { throw StorageError.sqlite("数据库由更新版本创建，请使用新版 PaperLingo。") }
-        if existed && version < 2 {
+        guard version <= 3 else { throw StorageError.sqlite("数据库由更新版本创建，请使用新版 PaperLingo。") }
+        if existed && version < 3 {
             let directory=url.deletingLastPathComponent().appendingPathComponent("Backups")
             try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:true)
-            let target=directory.appendingPathComponent("library-before-v0.2-\(UUID().uuidString).sqlite")
+            let target=directory.appendingPathComponent("library-before-v0.2.1-\(UUID().uuidString).sqlite")
             try backup(to:target)
             migrationBackupURL=target
         }
@@ -33,9 +34,16 @@ public final class Database {
         CREATE TABLE IF NOT EXISTS reviews(id INTEGER PRIMARY KEY,word_id TEXT,grade TEXT,mode TEXT,created REAL,next_due REAL);
         CREATE INDEX IF NOT EXISTS vocabulary_due ON vocabulary(due);
         """)
+        try migrateEvidenceSchema()
         try migrateResearchSchema()
-        try exec("PRAGMA user_version=2; COMMIT;")
+        try exec("PRAGMA user_version=3; COMMIT;")
         } catch { try? exec("ROLLBACK"); throw error }
+        if needsIndexCompaction {
+            // Reclaim the retired page vectors/FTS storage once. A concurrent
+            // reader may defer compaction; the new index is already committed.
+            try? exec("PRAGMA wal_checkpoint(TRUNCATE)")
+            try? exec("VACUUM")
+        }
     }
     deinit { sqlite3_close(handle) }
     func exec(_ sql: String) throws {
@@ -87,6 +95,7 @@ public final class Database {
         try exec("BEGIN IMMEDIATE")
         do {
             try write("DELETE FROM paper_search WHERE paper_id=?",[id])
+            try write("DELETE FROM passage_search WHERE paper_id=?",[id])
             try write("DELETE FROM papers WHERE id=?",[id])
             try exec("COMMIT")
         } catch {try? exec("ROLLBACK");throw error}

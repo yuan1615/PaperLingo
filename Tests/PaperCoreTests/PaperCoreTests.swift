@@ -217,7 +217,8 @@ extension PaperCoreTests {
         try db.saveVectors([embedded],model:"test-model")
         try db.replaceChunks(paperID:paper.id,chunks:chunks)
         XCTAssertEqual(try db.chunks(paperID:paper.id).first?.vector,[1,0,0])
-        XCTAssertEqual(try db.keywordSearch("alignment").first?.page,1)
+        // Source-only mentions do not enter the overview-based library index.
+        XCTAssertTrue(try db.keywordSearch("alignment").isEmpty)
         let changed=ResearchText.chunks(paperID:paper.id,pages:["A completely different article."])
         try db.replaceChunks(paperID:paper.id,chunks:changed)
         XCTAssertTrue(try db.chunks(paperID:paper.id).first?.vector.isEmpty == true)
@@ -243,6 +244,13 @@ extension PaperCoreTests {
         let (db,dir)=try database();defer{try? FileManager.default.removeItem(at:dir)}
         let paper=Paper(id:"p",title:"Test paper",filename:"test.pdf",kind:"PDF");try db.addPaper(paper)
         try db.saveDigest(digest)
+        let paperIndex=try db.passages()
+        XCTAssertEqual(paperIndex.count,1)
+        XCTAssertEqual(paperIndex[0].source,"论文概览")
+        XCTAssertTrue(paperIndex[0].page == nil)
+        XCTAssertTrue(paperIndex[0].text.contains(digest.oneLine))
+        XCTAssertTrue(paperIndex[0].text.contains(digest.points[0].text))
+        XCTAssertTrue(!paperIndex[0].text.contains(digest.points[0].quote))
         try db.saveNote(PaperNote(paperID:"p",title:"My note",body:"Keep original thought"))
         let markdown=try db.exportPaperMarkdown(paper)
         XCTAssertTrue(markdown.contains("第 2 页"));XCTAssertTrue(markdown.contains("Keep original thought"))
@@ -271,7 +279,10 @@ extension PaperCoreTests {
     }
 }
 
+@main struct PaperCoreChecksRunner {
+static func main() {
 let suite=PaperCoreTests()
+let evidenceSuite=EvidenceTests()
 let checks:[(String,() throws -> Void)] = [
     ("PDF normalization",suite.testPDFNormalizationAndClassification),
     ("Selection context locality and Unicode",suite.testContextUsesActualOccurrenceAndBoundedWindow),
@@ -290,7 +301,15 @@ let checks:[(String,() throws -> Void)] = [
     ("Research record and notes persistence",suite.testResearchRecordNotesAndKeywordPersistence),
     ("Chunks, vectors and cascading cleanup",suite.testChunkReplacementKeepsOnlyMatchingVectorsAndCascades),
     ("Grounded digest and Markdown export",suite.testGroundingRejectsInventedQuotesAndUsesActualPage),
-    ("Semantic model and vector integrity",suite.testSemanticRankingRejectsWrongModelAndInvalidVectors)
+    ("Semantic model and vector integrity",suite.testSemanticRankingRejectsWrongModelAndInvalidVectors),
+    ("Structured source inventory and reference exclusion",evidenceSuite.testSourceInventoryAndReferenceExclusion),
+    ("Experiment field and numeric grounding",evidenceSuite.testFieldGroundingRejectsInventedNumbersAndConditions),
+    ("Ledger persistence, review and cache",evidenceSuite.testLedgerPersistenceReviewAndCache),
+    ("Single paper index and incremental invalidation",evidenceSuite.testPassageVectorsInvalidateOnlyChangedInputs),
+    ("Paper-level ranking and irrelevant-result rejection",evidenceSuite.testHybridRetrievalThresholdsAndEvidenceGrouping),
+    ("v0.2 to evidence schema upgrade",evidenceSuite.testV2UpgradeKeepsNotesAndCreatesConsistentBackup),
+    ("Truncation recovery and exact source lines",evidenceSuite.testTruncatedRecordsRecoverAndLineNumbersUseOriginalText),
+    ("Bounded long-paper plans and experiment retention",evidenceSuite.testLongEvidencePlansBoundEveryBatchAndKeepEveryExperiment)
 ]
 for (name,run) in checks {
     let before=failures
@@ -299,3 +318,5 @@ for (name,run) in checks {
 }
 print("\(checks.count) checks, \(failures) failures")
 if failures>0 {exit(1)}
+}
+}

@@ -1,0 +1,145 @@
+{
+  "cases": [
+    {
+      "baseline_results": 4,
+      "baseline_top": "control-db",
+      "candidate_scores": [
+        0.9980179071426392
+      ],
+      "correct": true,
+      "expected": "control-db",
+      "matching_passages": 1,
+      "new_page": 0,
+      "new_results": 1,
+      "new_source": "档案（待概览）",
+      "new_top": "control-db",
+      "query": "如何对数据库表做索引连接并保持事务一致性？",
+      "seconds": 7.754026889801025
+    },
+    {
+      "baseline_results": 4,
+      "baseline_top": "control-image",
+      "candidate_scores": [
+        0.9988611936569214,
+        0.002566530602052808,
+        0.0008881110697984695
+      ],
+      "correct": true,
+      "expected": "control-image",
+      "matching_passages": 1,
+      "new_page": 0,
+      "new_results": 1,
+      "new_source": "档案（待概览）",
+      "new_top": "control-image",
+      "query": "image classification with convolutional networks",
+      "seconds": 1.0592859983444214
+    },
+    {
+      "baseline_results": 4,
+      "baseline_top": "p1",
+      "candidate_scores": [],
+      "correct": true,
+      "expected": "no relevant result",
+      "matching_passages": 0,
+      "new_page": 0,
+      "new_results": 0,
+      "new_source": "none",
+      "new_top": "none",
+      "query": "量子纠错表面码需要多少物理量子比特？",
+      "seconds": 0.02115607261657715
+    },
+    {
+      "baseline_results": 4,
+      "baseline_top": "p0",
+      "candidate_scores": [],
+      "correct": true,
+      "expected": "no relevant result",
+      "matching_passages": 0,
+      "new_page": 0,
+      "new_results": 0,
+      "new_source": "none",
+      "new_top": "none",
+      "query": "CRISPR基因编辑如何作用于干细胞？",
+      "seconds": 0.020083904266357422
+    },
+    {
+      "baseline_results": 4,
+      "baseline_top": "p1",
+      "candidate_scores": [
+        0.9997478127479553,
+        0.7356084585189819
+      ],
+      "correct": true,
+      "expected": "p1",
+      "matching_passages": 1,
+      "new_page": 0,
+      "new_results": 1,
+      "new_source": "论文概览",
+      "new_top": "p1",
+      "query": "扩散语言模型支持多语言零样本语音合成",
+      "seconds": 0.6627949476242065
+    },
+    {
+      "baseline_results": 4,
+      "baseline_top": "p1",
+      "candidate_scores": [
+        0.9992644190788269,
+        0.6689993739128113
+      ],
+      "correct": true,
+      "expected": "p1",
+      "matching_passages": 1,
+      "new_page": 0,
+      "new_results": 1,
+      "new_source": "论文概览",
+      "new_top": "p1",
+      "query": "LibriSpeech WER 1.30 语音合成",
+      "seconds": 0.4784560203552246
+    },
+    {
+      "baseline_results": 4,
+      "baseline_top": "p1",
+      "candidate_scores": [
+        0.9959241151809692,
+        0.24236266314983368
+      ],
+      "correct": true,
+      "expected": "p1",
+      "matching_passages": 1,
+      "new_page": 0,
+      "new_results": 1,
+      "new_source": "论文概览",
+      "new_top": "p1",
+      "query": "我计划比较16步和32步发音的首段等待",
+      "seconds": 0.49097001552581787
+    },
+    {
+      "baseline_results": 4,
+      "baseline_top": "p0",
+      "candidate_scores": [
+        0.9993764758110046,
+        0.9133533239364624
+      ],
+      "correct": true,
+      "expected": "p0",
+      "matching_passages": 1,
+      "new_page": 0,
+      "new_results": 2,
+      "new_source": "档案（待概览）",
+      "new_top": "p0",
+      "query": "统一的语音生成与语音编辑模型",
+      "seconds": 0.5131839513778687
+    }
+  ],
+  "control_documents": 2,
+  "index_seconds": 1.391463041305542,
+  "legacy_page_chunks": 58,
+  "legacy_vector_json_bytes": 737831,
+  "newly_embedded_papers": 4,
+  "paper_indexes": 4,
+  "passed": true,
+  "real_documents": 2,
+  "saved_real_overviews": 1,
+  "scope": "Small hand-selected diagnostic: two real local papers (one saved AI overview, one title-only fallback), two synthetic metadata controls, one synthetic note; not a statistical benchmark",
+  "vector_json_bytes": 50895
+}

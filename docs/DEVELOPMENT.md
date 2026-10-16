@@ -31,7 +31,7 @@ bash scripts/setup-local.sh
 
 ### v0.2 研究模型
 
-完成基础安装后运行 `python3 engine/install_research.py`，或双击 `安装研究模型.command`。它用独立的 `127.0.0.1:11435` 服务下载 `qwen3.6:27b-q4_K_M` 与 `qwen3-embedding:0.6b` 到同一项目模型目录，不操作系统 Ollama。新增下载约 18.1 GB，建议 32 GB 统一内存。
+完成基础安装后运行 `python3 engine/install_research.py` 和 `python3 engine/install_reranker.py`，或双击 `安装研究模型.command`。前者用独立的 `127.0.0.1:11435` 服务下载 `qwen3.6:27b-q4_K_M` 与 `qwen3-embedding:0.6b` 到同一项目模型目录，不操作系统 Ollama；后者下载固定快照的 `Qwen/Qwen3-Reranker-0.6B` 并校验 SHA-256。共约 19.3 GB，建议 32 GB 统一内存。
 
 安装器会预检余量、通过文件锁防止重复安装、重试短暂断线，并交由 Ollama 校验完整 blob。Ollama 0.40.x 可能在异常退出后留下空的分段元数据；重新安装时仅对已知的下载分段几何恢复安全前缀，最终完整哈希仍必须通过。恢复大型权重时，会把过大的范围细分为 100 MB 的原生分段，保留安全的已写前缀，降低末段拖尾；旧分段元数据另外保存在安装日志目录。不要在安装进行中手动改写 partial 文件。进度写入 `.runtime/logs/research-progress.json`，完成后保存实际模型 digest 到 `.runtime/research-models.ready`。
 
@@ -72,7 +72,13 @@ swift run --disable-sandbox PaperResearchSmoke --source /absolute/path/to/test-p
 
 默认素材明确为合成测试片段；工具不写入学习数据库。结果含实际耗时、模型名、向量维度、相似度和匹配后的汇总。全文 UI 验收需另行执行，不能把此诊断当成学术质量评测。
 
-离线 app 的搬迁 / 权重验证使用其内置 Python，命令见分发指南。已有实际结果与范围见 [VERIFICATION.md](VERIFICATION.md)。
+v0.2.1 的 `PaperResearchBenchmark --source PDF --work DIRECTORY` 使用与 app 相同的实验提取和概览客户端；会运行实际模型，只写隔离目录。`--plan-only` 仅检查证据规划，`--no-cache` 强制真实提取。
+
+`PaperRetrievalBenchmark --input CORPUS_JSON --work DIRECTORY --port OLLAMA_PORT --rerank-port BRIDGE_PORT` 用显式提供的本地素材对照论文概览索引与旧版正文索引；输入数组元素为 `id/title/path/kind`，可选 `digest` 指向已保存的 PaperDigest JSON。工具加入明确标注的合成对照与笔记，不写用户库。服务须预先启动；小样本诊断不等于通用检索准确率。
+
+数据库 schema 为 3；`paper-overview-v4` 保证每篇一个检索单元。正文仍存在原文证据与提取记录中，不能把原文全文存在本机等同于模型逐段读过。重排模型在 MPS 上使用 float32、eager attention、单文档无填充推理，避免已实测出现的批处理 NaN。
+
+离线 app 的搬迁 / 权重验证使用其内置 Python，命令见分发指南。实际结果与范围见 [v0.2.1 验证](VERIFICATION_V0.2.1.md) 和 [历史验证](VERIFICATION.md)。
 
 ### 启用 GitHub Actions
 

@@ -1,0 +1,21 @@
+{
+  "actual_model_calls": 2,
+  "batch_seconds": [
+    476.6004589796066
+  ],
+  "cache_hits": 0,
+  "experiments": 10,
+  "extracted_experiments": 10,
+  "extraction_batches": 1,
+  "measurement_rows": 16,
+  "pages": 22,
+  "passed": true,
+  "pipeline": "paperlingo-structured-v2",
+  "rejected_fields": 22,
+  "source": "OmniVoice arXiv:2604.00688v3",
+  "sources": 84,
+  "submitted_evidence": 30,
+  "summary_seconds": 55.231642961502075,
+  "total_evidence": 84,
+  "total_seconds": 532.157889008522
+}

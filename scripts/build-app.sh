@@ -12,6 +12,7 @@ from pathlib import Path
 (Path(sys.argv[2])/'Contents/Resources/runtime.json').write_text(json.dumps({'runtime':str(Path(sys.argv[1])/'.runtime')}))
 PY
 cp "$PROJECT_ROOT/engine/server.py" "$APP_DIR/Contents/Resources/engine/server.py"
+cp "$PROJECT_ROOT/engine/rerank.py" "$APP_DIR/Contents/Resources/engine/rerank.py"
 cp "$PROJECT_ROOT/packaging/Info.plist" "$APP_DIR/Contents/Info.plist"
 cp "$PROJECT_ROOT/LICENSE" "$APP_DIR/Contents/Resources/LICENSE"
 if [ -f "$PROJECT_ROOT/packaging/AppIcon.icns" ]; then cp "$PROJECT_ROOT/packaging/AppIcon.icns" "$APP_DIR/Contents/Resources/"; fi

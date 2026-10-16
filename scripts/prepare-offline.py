@@ -59,6 +59,13 @@ if ready.get('revision') != REVISION:
 # unrelated Ollama models and writable caches must never enter the app bundle.
 required_models=['translategemma:4b',*RESEARCH_MODELS]
 research_ready=json.loads((SOURCE/'research-models.ready').read_text())
+reranker_ready=json.loads((SOURCE/'reranker.ready').read_text())
+reranker=SOURCE/reranker_ready['model']
+if not (reranker/'model.safetensors').is_file():
+    raise SystemExit('Reranker is incomplete. Run engine/install_reranker.py first.')
+with (reranker/'model.safetensors').open('rb') as stream:
+    if hashlib.file_digest(stream,'sha256').hexdigest()!=reranker_ready['sha256']:
+        raise SystemExit('Reranker checksum mismatch; refusing to package changed weights.')
 if not all(name in {m.get('name') for m in research_ready} for name in RESEARCH_MODELS):
     raise SystemExit('Research models are not ready. Run engine/install_research.py first.')
 manifests=[]
@@ -71,7 +78,7 @@ snapshot=SOURCE/f'huggingface/hub/models--k2-fsa--OmniVoice/snapshots/{REVISION}
 required_space=(tree_size(SOURCE/'python/cpython-3.11.17-macos-aarch64-none')+
                 tree_size(SOURCE/'venv/lib/python3.11/site-packages')+
                 tree_size(SOURCE/'ollama')+tree_size(snapshot)+
-                sum(p.stat().st_size for p in blobs)+2*1024**3)
+                sum(p.stat().st_size for p in blobs)+tree_size(reranker)+2*1024**3)
 if shutil.disk_usage(APP).free < required_space:
     raise SystemExit(f'Offline staging needs at least {required_space/1024**3:.1f} GiB free; no runtime copied.')
 DEST.mkdir()
@@ -98,12 +105,15 @@ for file in [*manifests,*sorted(blobs)]:
     copy_file(file,target)
 # Dereference HF cache links: the app contains one independent, full snapshot.
 copy(snapshot,DEST/'models/OmniVoice',links=False)
+copy(reranker,DEST/'models/Qwen3-Reranker-0.6B',links=False)
+(DEST/'reranker.ready').write_text(json.dumps(reranker_ready))
 (DEST/'models.ready').write_text(json.dumps({'omnivoice':'models/OmniVoice','revision':REVISION}))
 (DEST/'research-models.ready').write_text(json.dumps(research_ready))
 (RESOURCES/'runtime.json').write_text(json.dumps({'runtime':'bundled','version':VERSION}))
 copy(ROOT/'packaging/third-party',RESOURCES/'ThirdParty')
 shutil.copy2(ROOT/'packaging/INSTALL-zh.txt',RESOURCES/'安装说明.txt')
 shutil.copy2(ROOT/'engine/verify_portable.py',RESOURCES/'engine/verify_portable.py')
+shutil.copy2(ROOT/'engine/rerank.py',RESOURCES/'engine/rerank.py')
 # Reject outward/absolute symlinks and developer-machine paths before signing.
 for file in DEST.rglob('*'):
     if file.is_symlink():
@@ -111,7 +121,7 @@ for file in DEST.rglob('*'):
         if os.path.isabs(target) or not file.resolve().is_relative_to(DEST):
             raise RuntimeError(f'Nonportable symlink: {file}: {target}')
 manifest={'version':VERSION,'architecture':'arm64','minimum_macos':'14.0','minimum_ram_gb':32,
-          'omnivoice_revision':REVISION,'components':{'python':'3.11.17','omnivoice':'0.2.1','torch':'2.8.0','ollama':'0.40.4','translation':'translategemma:4b','research':RESEARCH_MODELS[0],'embedding':RESEARCH_MODELS[1]},'files':{}}
+          'omnivoice_revision':REVISION,'components':{'python':'3.11.17','omnivoice':'0.2.1','torch':'2.8.0','ollama':'0.40.4','translation':'translategemma:4b','research':RESEARCH_MODELS[0],'embedding':RESEARCH_MODELS[1],'reranker':'Qwen3-Reranker-0.6B@'+reranker_ready['revision']},'files':{}}
 for file in sorted(DEST.rglob('*')):
     if file.is_file() and not file.is_symlink():
         if file.suffix=='.safetensors' or (file.parent.name=='blobs' and file.name.startswith('sha256-')):
