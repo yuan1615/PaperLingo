@@ -72,13 +72,13 @@ swift run --disable-sandbox PaperResearchSmoke --source /absolute/path/to/test-p
 
 默认素材明确为合成测试片段；工具不写入学习数据库。结果含实际耗时、模型名、向量维度、相似度和匹配后的汇总。全文 UI 验收需另行执行，不能把此诊断当成学术质量评测。
 
-v0.2.1 的 `PaperResearchBenchmark --source PDF --work DIRECTORY` 使用与 app 相同的实验提取和概览客户端；会运行实际模型，只写隔离目录。`--plan-only` 仅检查证据规划，`--no-cache` 强制真实提取。
+v0.2.2 的 `PaperResearchBenchmark --source PDF --work DIRECTORY --port OLLAMA_PORT` 使用与 app 相同的前三页加载器和一次摘要调用，随后为中文摘要建立一个向量；只写隔离目录。`--plan-only` 只检查前三页输入范围，不调用模型。需要预先启动本地 Ollama。
 
-`PaperRetrievalBenchmark --input CORPUS_JSON --work DIRECTORY --port OLLAMA_PORT --rerank-port BRIDGE_PORT` 用显式提供的本地素材对照论文概览索引与旧版正文索引；输入数组元素为 `id/title/path/kind`，可选 `digest` 指向已保存的 PaperDigest JSON。工具加入明确标注的合成对照与笔记，不写用户库。服务须预先启动；小样本诊断不等于通用检索准确率。
+`PaperRetrievalBenchmark --input CORPUS_JSON --work DIRECTORY --port OLLAMA_PORT --rerank-port BRIDGE_PORT` 使用已保存的本版摘要检查中英文召回及无关查询过滤。输入数组元素为 `id/title`，可选 `digest` 指向本版 PaperDigest JSON；不加载 PDF，没有摘要的论文不建向量。不写用户库，服务须预先启动；内置语音合成查询适用于 OmniVoice 测试素材，小样本诊断不等于通用检索准确率。
 
-数据库 schema 为 3；`paper-overview-v4` 保证每篇一个检索单元。正文仍存在原文证据与提取记录中，不能把原文全文存在本机等同于模型逐段读过。重排模型在 MPS 上使用 float32、eager attention、单文档无填充推理，避免已实测出现的批处理 NaN。
+数据库 schema 为 4；`chinese-summary-only-v1` 只为新摘要建立一个检索单元。升级前备份数据库，清理旧实验和全文缓存，保留个人笔记及学习数据。当前整理不调用旧版实验提取接口；保留的旧数据类型和纯函数用于历史兼容及回归检查。重排模型继续使用 float32、eager attention、单文档无填充推理，避免已实测出现的批处理 NaN。
 
-离线 app 的搬迁 / 权重验证使用其内置 Python，命令见分发指南。实际结果与范围见 [v0.2.1 验证](VERIFICATION_V0.2.1.md) 和 [历史验证](VERIFICATION.md)。
+离线 app 的搬迁 / 权重验证使用其内置 Python，命令见分发指南。实际结果与范围见 [v0.2.2 验证](VERIFICATION_V0.2.2.md) 和 [历史验证](VERIFICATION.md)。
 
 ### 启用 GitHub Actions
 

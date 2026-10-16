@@ -31,8 +31,6 @@ enum Route: String, CaseIterable { case reading = "阅读空间", library="研�
     @Published var digests:[String:PaperDigest]=[:]
     @Published var researchNotes:[PaperNote]=[]
     @Published var textStatuses:[String:PaperTextStatus]=[:]
-    @Published var ledgers:[String:ResearchLedger]=[:]
-    @Published var experimentReviews:[String:ExperimentReview]=[:]
     @Published var catalogPaperID:String?
     @Published var noteEditor:PaperNote?
     @Published var metadataEditor:Paper?
@@ -42,7 +40,6 @@ enum Route: String, CaseIterable { case reading = "阅读空间", library="研�
     @Published var researchMessage=""
     @Published var researchProgress=0.0
     @Published var researchError:String?
-    @Published var extractingLibrary=false
     @Published var libraryQuery=""
     @Published var searchHits:[ResearchSearchHit]=[]
     @Published var searching=false
@@ -53,7 +50,6 @@ enum Route: String, CaseIterable { case reading = "阅读空间", library="研�
     @Published var libraryFavoritesOnly=false
     @Published var librarySort="最近加入"
     var researchTask:Task<Void,Never>?
-    var textIndexTask:Task<Void,Never>?
     var searchTask:Task<Void,Never>?
     var semanticSearchQuery:String?
     var hasUnsavedResearchEdits=false
@@ -92,7 +88,6 @@ enum Route: String, CaseIterable { case reading = "阅读空间", library="研�
         guard let db else { throw AppError.message("数据库未打开，请检查数据目录权限。") }
         papers=try db.papers();words=try db.vocabulary();reviewedToday=try db.reviewsToday()
         records=try db.paperRecords();digests=try db.latestDigests();researchNotes=try db.allNotes();textStatuses=try db.textStatuses()
-        ledgers=try db.ledgers();experimentReviews=try db.experimentReviews()
     }
     func open(_ paper: Paper, page: Int? = nil) {
         audio.stop(); selectedPaperID=paper.id; route = .reading; clearSelection()
@@ -203,13 +198,12 @@ enum Route: String, CaseIterable { case reading = "阅读空间", library="研�
         guard panel.runModal() == .OK, let url=panel.url else { return }
         do {
             struct Backup: Codable {
-                var version=3;var exported=Date()
+                var version=4;var exported=Date()
                 var papers:[Paper];var vocabulary:[Vocabulary]
                 var records:[PaperRecord];var notes:[PaperNote];var digests:[PaperDigest]
-                var ledgers:[ResearchLedger];var experimentReviews:[ExperimentReview]
             }
             let encoder=JSONEncoder(); encoder.outputFormatting=[.prettyPrinted,.sortedKeys]; encoder.dateEncodingStrategy = .iso8601
-            try encoder.encode(Backup(papers:papers,vocabulary:words,records:papers.map{record(for:$0)},notes:researchNotes,digests:Array(digests.values),ledgers:Array(ledgers.values),experimentReviews:Array(experimentReviews.values))).write(to:url,options:.atomic)
+            try encoder.encode(Backup(papers:papers,vocabulary:words,records:papers.map{record(for:$0)},notes:researchNotes,digests:Array(digests.values))).write(to:url,options:.atomic)
             toast="词库、论文档案和笔记已导出。PDF 与完整日志仍需备份数据目录。"
         } catch { self.error=error.localizedDescription }
     }

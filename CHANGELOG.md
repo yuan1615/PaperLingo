@@ -2,7 +2,19 @@
 
 Notable changes are recorded here. Version numbers follow `MAJOR.MINOR.PATCH`; v0.x releases may change behavior and data formats.
 
-## [0.2.1] - Unreleased
+## [0.2.2] - 2026-10-16
+
+### Changed
+
+- Read only the first three physical PDF pages; use a bounded opening excerpt for web documents. Library opening and index rebuilding never scan PDF text.
+- Generate motivation, core method and reported results in Chinese with one local Qwen3.6 request and a fixed JSON prompt. Explicitly mark results absent from the supplied opening.
+- Build exactly one vector from each current Chinese summary. Exclude original text, titles, manual metadata and personal notes from embedding input; papers without summaries remain available through keyword search.
+- Remove the experiment/evidence tab and automatic experiment extraction. Schema 4 backs up the database, then clears retired experiment and full-text caches while preserving papers, notes and learning records.
+- Export version 4 JSON and summary-focused Markdown without experiment records.
+
+Implementation scope: [v0.2.2 plan](docs/V0.2.2_PLAN.md).
+
+## [0.2.1] - 2026-10-16
 
 ### Added
 

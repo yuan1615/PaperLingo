@@ -4,36 +4,6 @@ import PDFKit
 import PaperCore
 import UniformTypeIdentifiers
 
-enum ResearchDocumentLoader {
-    static func extract(paper: Paper, url: URL) async throws -> (chunks: [PaperTextChunk], status: PaperTextStatus, evidence:[ResearchEvidence]) {
-        let worker = Task.detached(priority: .utility) {
-            () throws -> (chunks: [PaperTextChunk], status: PaperTextStatus, evidence:[ResearchEvidence]) in
-            try Task.checkCancellation()
-            var pages: [String] = []
-            if paper.kind == "PDF" {
-                guard let document = PDFDocument(url: url), document.pageCount > 0 else {
-                    throw AppError.message("无法读取原论文文件，请检查文件是否存在或已损坏。")
-                }
-                for page in 0..<document.pageCount {
-                    try Task.checkCancellation()
-                    pages.append(document.page(at: page)?.string ?? "")
-                }
-            } else {
-                pages = [try String(contentsOf: url, encoding: .utf8)]
-            }
-            let chunks = ResearchText.chunks(paperID: paper.id, pages: pages)
-            var status = PaperTextStatus(
-                paperID: paper.id, sourceHash: ResearchText.hash(pages.joined(separator: "\u{001E}")),
-                totalPages: pages.count, textPages: pages.filter { !TextTools.clean($0).isEmpty }.count,
-                chunkCount: chunks.count)
-            status.extractionVersion=ResearchStructure.indexVersion
-            return (chunks, status, ResearchStructure.sources(paperID:paper.id,pages:pages))
-        }
-        return try await withTaskCancellationHandler(
-            operation: { try await worker.value }, onCancel: { worker.cancel() })
-    }
-}
-
 extension AppStore {
     var catalogPaper: Paper? { papers.first { $0.id == catalogPaperID } }
     var currentNotePaper: Paper? { route == .library ? catalogPaper : selectedPaper }
@@ -45,7 +15,7 @@ extension AppStore {
     var categories: [String] { Array(Set(papers.map { record(for: $0).category }.filter { !$0.isEmpty })).sorted() }
     var allPaperTags: [String] { Array(Set(records.values.flatMap(\.tags))).sorted() }
     var embeddingSignature: String {
-        ResearchModels.embedding + "@" + (engines.modelDigests[ResearchModels.embedding] ?? "unavailable") + "|" + ResearchStructure.indexVersion
+        ResearchModels.embedding + "@" + (engines.modelDigests[ResearchModels.embedding] ?? "unavailable") + "|" + PaperSummary.indexVersion
     }
     func record(for paper: Paper) -> PaperRecord { records[paper.id] ?? PaperRecord(paperID: paper.id) }
     func showArchive(_ paper: Paper) {
@@ -164,7 +134,7 @@ extension AppStore {
                 var units = try db?.passages() ?? []
                 let updates=Array(units.filter{$0.source != "正文" && $0.semanticEligible && ($0.vectorModel != signature || $0.vector.isEmpty)}.prefix(32))
                 if !updates.isEmpty {
-                    searchMessage="正在更新变动的论文概览索引…"
+                    searchMessage="正在更新中文摘要索引…"
                     for offset in stride(from:0,to:updates.count,by:8) {
                         var batch=Array(updates[offset..<min(offset+8,updates.count)])
                         let vectors=try await researchClient.embeddings(batch.map(\.embeddingInput))
@@ -175,7 +145,7 @@ extension AppStore {
                     units=try db?.passages() ?? []
                 }
                 guard units.contains(where: { $0.vectorModel == signature && !$0.vector.isEmpty }) else {
-                    throw AppError.message("尚未建立当前模型的语义索引，请点击「建立检索索引」。关键词检索已经可用。")
+                    throw AppError.message("请先生成前三页摘要，再建立中文摘要索引。标题、资料和笔记仍可用关键词检索。")
                 }
                 let vector = try await researchClient.embeddings([query], query: true)[0]
                 try Task.checkCancellation()
@@ -197,8 +167,8 @@ extension AppStore {
                 let pending=units.filter{$0.semanticEligible && ($0.vectorModel != signature || $0.vector.isEmpty)}.count
                 searchMessage = scores == nil ? "重排服务未就绪，当前显示通过阈值的论文候选；可检查本地引擎。\(indexed)/\(papers.count) 篇有当前语义索引。" : "\(indexed)/\(papers.count) 篇参与语义检索，每篇一个概览索引。\(searchHits.isEmpty ? "没有找到足够相关的论文。":"候选已由本机重排模型复核，可查看概览了解关联。")"
                 if pending>0 {searchMessage += " 仍有 \(pending) 篇待更新，可点击建立 / 更新检索索引。"}
-                let missing=papers.filter{digests[$0.id] == nil}.count
-                if missing>0 {searchMessage += " \(missing) 篇尚无 AI 概览，暂按标题和手工资料检索；整理后可提高效果。"}
+                let missing=papers.filter{!PaperSummary.isCurrent(digests[$0.id])}.count
+                if missing>0 {searchMessage += " \(missing) 篇待生成前三页摘要，暂只参与关键词检索。"}
             } catch is CancellationError {} catch {
                 if !Task.isCancelled {
                     searchMessage = error.localizedDescription
@@ -208,33 +178,20 @@ extension AppStore {
             if !Task.isCancelled { searching = false }
         }
     }
-    func ensureText(_ paper: Paper, force: Bool = false) async throws -> [PaperTextChunk] {
-        if !force, textStatuses[paper.id]?.extractionVersion == ResearchStructure.indexVersion,ledgers[paper.id]?.version == ResearchStructure.version { return try db?.chunks(paperID: paper.id) ?? [] }
-        let extracted = try await ResearchDocumentLoader.extract(paper: paper, url: fileURL(paper))
+    func openingSource(_ paper: Paper, force: Bool = false) async throws -> PaperSummarySource {
+        if !force, let status = textStatuses[paper.id], status.extractionVersion == PaperSummary.version {
+            return PaperSummarySource(chunks: try db?.chunks(paperID: paper.id) ?? [], status: status)
+        }
+        let url = fileURL(paper)
+        let worker = Task.detached(priority: .utility) {
+            try paper.kind == "PDF" ? PaperSummarySource.pdf(paperID: paper.id, url: url) : PaperSummarySource.web(paperID: paper.id, url: url)
+        }
+        let source = try await withTaskCancellationHandler(operation: { try await worker.value }, onCancel: { worker.cancel() })
         try Task.checkCancellation()
         guard papers.contains(where: { $0.id == paper.id }) else { throw CancellationError() }
-        try db?.replaceChunks(paperID: paper.id, chunks: extracted.chunks, status: extracted.status)
-        textStatuses[paper.id] = extracted.status
-        if ledgers[paper.id]?.sourceHash != extracted.status.sourceHash || ledgers[paper.id]?.version != ResearchStructure.version {
-            let ledger=ResearchLedger(paperID:paper.id,sourceHash:extracted.status.sourceHash,totalPages:extracted.status.totalPages,evidence:extracted.evidence,model:ResearchModels.analysis)
-            try db?.saveLedger(ledger);ledgers[paper.id]=ledger
-        }
-        return try db?.chunks(paperID: paper.id) ?? []
-    }
-    func indexLibraryText() {
-        guard !extractingLibrary, !researchBusy else { return }
-        guard papers.contains(where: { textStatuses[$0.id]?.extractionVersion != ResearchStructure.indexVersion || ledgers[$0.id]?.version != ResearchStructure.version }) else { return }
-        extractingLibrary = true
-        textIndexTask = Task {
-            for paper in papers where textStatuses[paper.id]?.extractionVersion != ResearchStructure.indexVersion || ledgers[paper.id]?.version != ResearchStructure.version {
-                if Task.isCancelled || researchBusy { break }
-                do { _ = try await ensureText(paper) } catch {
-                    if !Task.isCancelled { researchError = "正文索引：\(paper.title) · \(error.localizedDescription)" }
-                }
-            }
-            extractingLibrary = false
-            if !Task.isCancelled { refreshLibrarySearch() }
-        }
+        try db?.replaceChunks(paperID: paper.id, chunks: source.chunks, status: source.status)
+        textStatuses[paper.id] = source.status
+        return source
     }
     func cancelResearch() {
         researchTask?.cancel()
@@ -248,17 +205,21 @@ extension AppStore {
     }
     func startResearch(_ targets: [Paper], summarize: Bool = true, refreshText: Bool = false) {
         guard !researchBusy, !searching, !targets.isEmpty else { return }
+        let eligible = summarize ? targets : targets.filter { PaperSummary.isCurrent(digests[$0.id]) }
+        guard !eligible.isEmpty else {
+            researchMessage = "请先生成前三页摘要，再建立摘要索引。"
+            return
+        }
         guard !translating else {
             toast = "当前翻译完成后即可整理论文，避免同时加载多个模型。"
             return
         }
-        textIndexTask?.cancel()
         researchBusy = true
         researchError = nil
         researchProgress = 0
         researchMessage = "准备本地模型…"
         allowEngineRestore = true
-        researchTask = Task { await runResearch(targets, summarize: summarize, refreshText: refreshText) }
+        researchTask = Task { await runResearch(eligible, summarize: summarize, refreshText: refreshText) }
     }
     private func runResearch(_ targets: [Paper], summarize: Bool, refreshText: Bool) async {
         var pausedSpeech = false
@@ -277,17 +238,16 @@ extension AppStore {
             for (number, paper) in targets.enumerated() {
                 try Task.checkCancellation()
                 researchPaperID = paper.id
-                researchMessage = "\(number+1)/\(targets.count) · 提取 \(paper.title)"
-                let chunks = try await ensureText(paper, force: refreshText)
-                guard !chunks.isEmpty else { throw AppError.message("\(paper.title) 没有可提取的文字，需要先 OCR；未生成汇总。") }
                 if summarize {
-                    let digest = try await analyzePaper(
-                        paper, chunks: chunks, signature: modelSignature,
-                        base: Double(number) / Double(targets.count) * 0.8, scale: 0.8 / Double(targets.count),
-                        useCache: !refreshText)
+                    researchMessage = "\(number+1)/\(targets.count) · 读取开头内容：\(paper.title)"
+                    let source = try await openingSource(paper, force: refreshText)
+                    guard !source.chunks.isEmpty else { throw AppError.message("\(paper.title) 前三页没有可提取的文字，请先 OCR。") }
+                    researchMessage = "\(number+1)/\(targets.count) · 生成研究动机、核心方法与实验结果"
+                    let digest = try await researchClient.summarizeOpening(source, signature: modelSignature)
                     try Task.checkCancellation()
                     try db?.saveDigest(digest)
                     digests[paper.id] = digest
+                    researchProgress = Double(number + 1) / Double(targets.count) * 0.8
                 }
             }
             await researchClient.unload(ResearchModels.analysis)
@@ -301,7 +261,7 @@ extension AppStore {
                     for offset in stride(from: 0, to: pending.count, by: 8) {
                         try Task.checkCancellation()
                         let batch = Array(pending[offset..<min(offset + 8, pending.count)])
-                        researchMessage = "\(number+1)/\(targets.count) · 更新论文概览索引"
+                        researchMessage = "\(number+1)/\(targets.count) · 建立中文摘要向量（每篇一个）"
                         let vectors = try await researchClient.embeddings(batch.map(\.embeddingInput))
                         var updates: [ResearchPassage] = []
                         for (chunk, vector) in zip(batch, vectors) {
@@ -321,7 +281,7 @@ extension AppStore {
             try reload()
             researchProgress = 1
             researchMessage = "已完成 \(targets.count) 篇\(summarize ? "论文整理" : "检索索引")"
-        } catch is CancellationError { researchMessage = "已取消；完成的汇总和分段缓存已保留" } catch {
+        } catch is CancellationError { researchMessage = "已取消；已完成的摘要保留，未完成项沿用原摘要" } catch {
             if Task.isCancelled {
                 researchMessage = "已取消；已完成内容保留"
             } else {
@@ -346,72 +306,5 @@ extension AppStore {
             toast = researchError == nil ? researchMessage : "论文整理未完成，返回研究库查看原因"
         }
         if pausedSpeech && !shuttingDown && allowEngineRestore { Task { await self.engines.start() } }
-    }
-    private func analyzePaper(
-        _ paper: Paper, chunks: [PaperTextChunk], signature: String, base: Double, scale: Double,
-        useCache: Bool
-    )
-        async throws -> PaperDigest
-    {
-        guard var ledger=ledgers[paper.id] else {throw AppError.message("未提取到原文证据")}
-        let started=Date();ledger.model=signature;ledger.modelCalls=0
-        let batches=ResearchStructure.plan(ledger)
-        for (index,sources) in batches.enumerated() {
-            try Task.checkCancellation()
-            researchMessage="提取实验字段与证据 · \(index+1)/\(batches.count) 组"
-            let key=ResearchText.hash(ResearchModels.structuredVersion+signature+sources.map(\.id).joined())
-            let draft:StructuredDraft
-            let cached=useCache ? try db?.cachedStructured(key):nil
-            if let cached {draft=cached}
-            else {
-                let baseline=ledger
-                draft=try await researchClient.extract(sources:sources) { [weak self] partial in
-                    guard let self,!Task.isCancelled else{return}
-                    let saved=partial.applying(to:baseline,sources:sources)
-                    do {
-                        try self.db?.cacheStructured(partial,key:key,paperID:paper.id)
-                        try self.db?.saveLedger(saved);self.ledgers[paper.id]=saved
-                        self.researchMessage="已保存 \(saved.experiments.filter(\.extracted).count)/\(saved.experiments.filter{$0.kind == .experiment}.count) 项实验字段，继续提取…"
-                        self.researchProgress=base+scale*0.8*Double(saved.experiments.filter(\.extracted).count)/Double(max(1,saved.experiments.filter{$0.kind == .experiment}.count))
-                    }catch {self.researchError=error.localizedDescription}
-                }
-                try db?.cacheStructured(draft,key:key,paperID:paper.id)
-            }
-            ledger=draft.applying(to:ledger,sources:sources)
-            if cached != nil {ledger.modelCalls-=1}
-            ledger.elapsedSeconds=Date().timeIntervalSince(started)
-            try db?.saveLedger(ledger);ledgers[paper.id]=ledger
-            researchProgress=base+scale*0.8*Double(index+1)/Double(max(1,batches.count))
-        }
-        for attempt in 0..<2 {
-            let pending=ledger.experiments.filter{$0.kind == .experiment && !$0.extracted}
-            guard !pending.isEmpty else{break}
-            try Task.checkCancellation()
-            let ids=Set(pending.flatMap(\.evidenceIDs))
-            var retryLedger=ledger
-            retryLedger.evidence=ledger.evidence.filter{ids.contains($0.id)}
-            researchMessage="补提取剩余 \(pending.count) 项实验 · 第 \(attempt+1) 次"
-            for sources in ResearchStructure.plan(retryLedger) {
-                try Task.checkCancellation()
-                let key=ResearchText.hash(ResearchModels.structuredVersion+signature+sources.map(\.id).joined())
-                let draft=try await researchClient.extract(sources:sources)
-                try db?.cacheStructured(draft,key:key,paperID:paper.id)
-                ledger=draft.applying(to:ledger,sources:sources);try db?.saveLedger(ledger);ledgers[paper.id]=ledger
-            }
-            if ledger.experiments.filter({$0.kind == .experiment && !$0.extracted}).count>=pending.count {break}
-        }
-        try Task.checkCancellation()
-        ledger.completed=true;ledger.elapsedSeconds=Date().timeIntervalSince(started)
-        try db?.saveLedger(ledger);ledgers[paper.id]=ledger
-        researchMessage="实验记录已保存 · 生成中文概览"
-        let digest=try await researchClient.summarize(ledger:ledger,categories:categories)
-        ledger.modelCalls+=1;ledger.elapsedSeconds=Date().timeIntervalSince(started)
-        try db?.saveLedger(ledger);ledgers[paper.id]=ledger
-        researchProgress=base+scale
-        return digest
-    }
-    func saveExperimentReview(_ review:ExperimentReview) {
-        do {try db?.saveExperimentReview(review);experimentReviews[review.experimentID]=review}
-        catch {self.error=error.localizedDescription}
     }
 }

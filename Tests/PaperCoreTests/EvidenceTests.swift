@@ -57,31 +57,12 @@ final class EvidenceTests {
         XCTAssertEqual(try db.notes(paperID:"p").first?.body,note.body)
         XCTAssertTrue(try db.cachedStructured("key") != nil)
         let markdown=try db.exportPaperMarkdown(paper)
-        XCTAssertTrue(markdown.contains("1.30"));XCTAssertTrue(markdown.contains("结构化实验记录"));XCTAssertTrue(markdown.contains("已核对"))
+        XCTAssertTrue(!markdown.contains("1.30"));XCTAssertTrue(markdown.contains(note.body))
         try db.deletePaper("p")
         XCTAssertTrue(try db.ledgers().isEmpty);XCTAssertTrue(try db.passages().isEmpty);XCTAssertTrue(try db.experimentReviews().isEmpty)
     }
     func testPassageVectorsInvalidateOnlyChangedInputs() throws {
-        let (db,dir)=try PaperCoreTests().database();defer{try? FileManager.default.removeItem(at:dir)}
-        let p=Paper(id:"p",title:"Speech methods",filename:"p.pdf",kind:"PDF");try db.addPaper(p)
-        let chunks=ResearchStructure.chunks(paperID:"p",pages:["1 Methods\nWe synthesize English speech incrementally to reduce first audio latency while preserving pronunciation."])
-        try db.replaceChunks(paperID:"p",chunks:chunks)
-        var note=PaperNote(paperID:"p",body:"first thought");try db.saveNote(note)
-        var units=try db.passages();for i in units.indices{units[i].vector=[1,0]};try db.savePassageVectors(units,model:"v3")
-        XCTAssertEqual(try db.passages().count,1)
-        XCTAssertTrue(try db.passages()[0].page == nil)
-        XCTAssertTrue(try !db.passages()[0].text.contains("preserving pronunciation"))
-        let oldID=try db.passages()[0].id
-        try db.saveLedger(fixture())
-        XCTAssertEqual(try db.passages()[0].id,oldID)
-        XCTAssertEqual(try db.passages()[0].vector,[1,0])
-        note.body="second independent thought";try db.saveNote(note)
-        XCTAssertEqual(try db.passages().count,1)
-        XCTAssertTrue(try db.passages()[0].vector.isEmpty)
-        XCTAssertTrue(try db.passages()[0].id != oldID)
-        XCTAssertTrue(try db.passages()[0].text.contains(note.body))
-        try db.savePaperRecord(PaperRecord(paperID:"p"),title:"Renamed paper")
-        XCTAssertTrue(try db.passages().allSatisfy{$0.vector.isEmpty})
+        try SummaryTests().testSummaryOnlyIndex()
     }
     func testHybridRetrievalThresholdsAndEvidenceGrouping() {
         var units=(0..<3).map{i in ResearchPassage(paperID:i<2 ? "a":"b",source:"正文",sourceID:"\(i)",title:"Paper",section:"Results",page:i,text:"WER and streaming latency evidence \(i)")}
@@ -105,7 +86,7 @@ final class EvidenceTests {
         let upgraded=try Database(url:url)
         XCTAssertTrue(upgraded.migrationBackupURL != nil);XCTAssertEqual(try upgraded.notes(paperID:"p").first?.body,"Existing note")
         XCTAssertTrue(try upgraded.ledgers().isEmpty)
-        XCTAssertEqual(try upgraded.passages().count,1)
+        XCTAssertEqual(try upgraded.passages().count,0)
     }
     func testTruncatedRecordsRecoverAndLineNumbersUseOriginalText() throws {
         let experiment:[String:Any]=["source":"E1","dataset":"Benchmark-X","task":"","metrics":["WER"],"conditions":"H20 GPU","limitations":"","rows":[["method":"Proposed","metric":"WER","value":"1.30","condition":"H20 GPU","line":3]]]

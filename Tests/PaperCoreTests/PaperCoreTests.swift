@@ -245,12 +245,7 @@ extension PaperCoreTests {
         let paper=Paper(id:"p",title:"Test paper",filename:"test.pdf",kind:"PDF");try db.addPaper(paper)
         try db.saveDigest(digest)
         let paperIndex=try db.passages()
-        XCTAssertEqual(paperIndex.count,1)
-        XCTAssertEqual(paperIndex[0].source,"论文概览")
-        XCTAssertTrue(paperIndex[0].page == nil)
-        XCTAssertTrue(paperIndex[0].text.contains(digest.oneLine))
-        XCTAssertTrue(paperIndex[0].text.contains(digest.points[0].text))
-        XCTAssertTrue(!paperIndex[0].text.contains(digest.points[0].quote))
+        XCTAssertTrue(paperIndex.isEmpty) // Legacy full-paper summaries require regeneration.
         try db.saveNote(PaperNote(paperID:"p",title:"My note",body:"Keep original thought"))
         let markdown=try db.exportPaperMarkdown(paper)
         XCTAssertTrue(markdown.contains("第 2 页"));XCTAssertTrue(markdown.contains("Keep original thought"))
@@ -260,7 +255,7 @@ extension PaperCoreTests {
         var preview=digest;preview.id=UUID().uuidString;preview.isPartial=true;preview.created=Date().addingTimeInterval(1)
         try db.saveDigest(preview)
         XCTAssertTrue(try db.latestDigests()["p"]?.isPartial == true)
-        XCTAssertTrue(try db.exportPaperMarkdown(paper).contains("阶段预览（全文尚未完成）"))
+        XCTAssertTrue(try db.exportPaperMarkdown(paper).contains("历史 AI 汇总"))
         var complete=digest;complete.id=UUID().uuidString;complete.created=Date().addingTimeInterval(2)
         try db.saveDigest(complete)
         XCTAssertTrue(try db.latestDigests()["p"]?.isPartial != true)
@@ -283,7 +278,11 @@ extension PaperCoreTests {
 static func main() {
 let suite=PaperCoreTests()
 let evidenceSuite=EvidenceTests()
+let summarySuite=SummaryTests()
 let checks:[(String,() throws -> Void)] = [
+    ("First-three-page source boundary",summarySuite.testFirstThreePagesOnly),
+    ("Summary-only vector and stable personal notes",summarySuite.testSummaryOnlyIndex),
+    ("Retired experiment data migration",summarySuite.testMigrationRemovesRetiredCaches),
     ("PDF normalization",suite.testPDFNormalizationAndClassification),
     ("Selection context locality and Unicode",suite.testContextUsesActualOccurrenceAndBoundedWindow),
     ("Bundled runtime relocation and writable metadata",suite.testBundledRuntimeRelocationAndWritableStore),

@@ -19,7 +19,7 @@ final class AppDelegate:NSObject,NSApplicationDelegate,UNUserNotificationCenterD
         // SwiftUI subscriptions may already be gone when AppKit terminates.
         // Signal the owned engines synchronously before the app exits.
         store?.shuttingDown=true
-        store?.researchTask?.cancel();store?.textIndexTask?.cancel();store?.searchTask?.cancel()
+        store?.researchTask?.cancel();store?.searchTask?.cancel()
         store?.audio.stop()
         store?.engines.stop()
     }

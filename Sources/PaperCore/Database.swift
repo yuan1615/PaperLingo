@@ -16,11 +16,11 @@ public final class Database {
         guard sqlite3_open(url.path, &handle) == SQLITE_OK else { throw StorageError.sqlite("无法打开数据库") }
         sqlite3_busy_timeout(handle, 5000)
         let version = try rows("PRAGMA user_version") { Int(sqlite3_column_int($0,0)) }.first ?? 0
-        guard version <= 3 else { throw StorageError.sqlite("数据库由更新版本创建，请使用新版 PaperLingo。") }
-        if existed && version < 3 {
+        guard version <= 4 else { throw StorageError.sqlite("数据库由更新版本创建，请使用新版 PaperLingo。") }
+        if existed && version < 4 {
             let directory=url.deletingLastPathComponent().appendingPathComponent("Backups")
             try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:true)
-            let target=directory.appendingPathComponent("library-before-v0.2.1-\(UUID().uuidString).sqlite")
+            let target=directory.appendingPathComponent("library-before-v0.2.2-\(UUID().uuidString).sqlite")
             try backup(to:target)
             migrationBackupURL=target
         }
@@ -36,7 +36,13 @@ public final class Database {
         """)
         try migrateEvidenceSchema()
         try migrateResearchSchema()
-        try exec("PRAGMA user_version=3; COMMIT;")
+        if version < 4 {
+            // Retired experiment/full-text caches are recoverable from the upgrade backup.
+            // Papers, annotations, vocabulary and reading positions remain untouched.
+            try exec("DELETE FROM paper_ledgers; DELETE FROM experiment_reviews; DELETE FROM research_cache; DELETE FROM paper_analysis_cache; DELETE FROM paper_chunks; DELETE FROM paper_text_status;")
+            needsIndexCompaction = true
+        }
+        try exec("PRAGMA user_version=4; COMMIT;")
         } catch { try? exec("ROLLBACK"); throw error }
         if needsIndexCompaction {
             // Reclaim the retired page vectors/FTS storage once. A concurrent

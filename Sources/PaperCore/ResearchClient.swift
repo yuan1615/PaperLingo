@@ -47,6 +47,26 @@ public actor ResearchClient {
         }
         return data
     }
+    public func summarizeOpening(_ source: PaperSummarySource, signature: String = ResearchModels.analysis) async throws -> PaperDigest {
+        guard !source.chunks.isEmpty, source.status.extractionVersion == PaperSummary.version,
+              source.chunks.count <= 3, source.chunks.allSatisfy({ (0..<3).contains($0.page) && $0.paperID == source.status.paperID }) else {
+            throw ResearchError.message("只能整理前三页的有效文字；扫描件请先 OCR。")
+        }
+        let string: [String: Any] = ["type": "string"]
+        let schema: [String: Any] = ["type": "object", "properties": [
+            "oneLine": string, "motivation": string, "method": string, "results": string, "category": string,
+            "tags": ["type": "array", "items": string, "maxItems": 5]],
+            "required": ["oneLine", "motivation", "method", "results", "category", "tags"], "additionalProperties": false]
+        let excerpts = source.chunks.map { ["page": String($0.page + 1), "text": $0.text] }
+        let context = String(decoding: try JSONSerialization.data(withJSONObject: excerpts), as: UTF8.self)
+        // Reject exceptionally dense pages explicitly instead of silently truncating the source.
+        guard context.utf8.count < 42000 else { throw ResearchError.message("前三页文字超出本地摘要上下文容量；未截断输入，请检查 PDF 文字层。") }
+        let data = try await request("/api/chat", ["model": ResearchModels.analysis, "stream": false, "think": false,
+            "format": schema, "messages": [["role": "system", "content": PaperSummary.prompt], ["role": "user", "content": context]],
+            "options": ["temperature": 0, "num_ctx": 16384, "num_predict": 1600], "keep_alive": "2m"])
+        let draft = try decodeModel(PaperSummaryDraft.self, data: data)
+        return try draft.digest(source: source, model: signature)
+    }
     public func draft(
         chunks: [PaperTextChunk], previous: [DigestDraft] = [], categories: [String] = [],
         model: String = ResearchModels.analysis, final: Bool = false
@@ -229,8 +249,8 @@ public actor ResearchClient {
     }
     private func decodeModel<T:Decodable>(_ type:T.Type,data:Data) throws -> T {
         let object=try JSONSerialization.jsonObject(with:data) as? [String:Any]
-        guard object?["done_reason"] as? String != "length" else {throw ResearchError.message("结构化提取达到输出上限；已保存的证据和实验记录保留，可继续处理。")}
-        guard let message=object?["message"] as? [String:Any],let content=message["content"] as? String else{throw ResearchError.message("本地模型没有返回结构化记录")}
+        guard object?["done_reason"] as? String != "length" else {throw ResearchError.message("摘要达到输出上限，本次未覆盖原摘要；请重试。")}
+        guard let message=object?["message"] as? [String:Any],let content=message["content"] as? String else{throw ResearchError.message("本地模型没有返回完整内容")}
         return try JSONDecoder().decode(type,from:Data(content.utf8))
     }
     private static func schema(validIDs: [String]) -> [String: Any] {

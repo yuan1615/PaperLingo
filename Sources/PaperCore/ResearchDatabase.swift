@@ -32,10 +32,10 @@ extension Database {
             CREATE VIRTUAL TABLE IF NOT EXISTS paper_search USING fts5(paper_id UNINDEXED,title,metadata,summary,notes,body,tokenize='unicode61 remove_diacritics 2');
             """)
         let storedVersion=try rows("SELECT value FROM research_index_meta WHERE key='version'"){text($0,0)}.first
-        if storedVersion != ResearchStructure.indexVersion {
+        if storedVersion != PaperSummary.indexVersion {
             try exec("DELETE FROM research_passages; DELETE FROM passage_search; DELETE FROM paper_search;")
             try exec("UPDATE paper_chunks SET vector='',vector_model='' WHERE vector<>'' OR vector_model<>'';")
-            try write("INSERT INTO research_index_meta VALUES('version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[ResearchStructure.indexVersion])
+            try write("INSERT INTO research_index_meta VALUES('version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[PaperSummary.indexVersion])
             needsIndexCompaction=true
         }
         let indexed = Set(try rows("SELECT paper_id FROM paper_search") { text($0, 0) })
@@ -310,34 +310,18 @@ extension Database {
         ]
         if let digest {
             lines += [
-                "", digest.isPartial == true ? "## AI 阶段预览（全文尚未完成）" : "## AI 汇总", "", digest.oneLine, "",
-                "模型：\(digest.model) · \(digest.created.formatted()) · 已处理有文字的 \(digest.processedPages)/\(digest.totalPages) 页。内容仍需对照论文核实。",
+                "", PaperSummary.isCurrent(digest) ? "## AI 中文摘要" : "## 历史 AI 汇总（请重新生成前三页摘要）", "", digest.oneLine, "",
+                "模型：\(digest.model) · \(digest.created.formatted()) · \(PaperSummary.isCurrent(digest) ? (paper.kind == "PDF" ? "仅依据前 \(min(3, digest.totalPages)) 页文字，原文件共 \(digest.totalPages) 页" : "仅依据网页开头最多 15,000 字符") : "旧版处理范围 \(digest.processedPages)/\(digest.totalPages) 页")。结果为作者报告，仍需对照原论文核实。",
             ]
-            for topic in DigestTopic.allCases {
-                lines += ["", "### \(topic.title)", ""]
+            for topic in PaperSummary.topics {
+                lines += ["", "### \(PaperSummary.title(topic))", ""]
                 let points = digest.points.filter { $0.topic == topic }
                 if points.isEmpty { lines.append("未从本次材料中提取到有证据的要点。") }
                 for point in points {
-                    lines += [
-                        "- \(point.text)", "", "> \(point.quote.replacingOccurrences(of:"\n",with:"\n> "))", "",
-                        "来源：第 \(point.page+1) 页。", "",
-                    ]
-                }
-            }
-        }
-        if let payload=try rows("SELECT payload FROM paper_ledgers WHERE paper_id=?",[paper.id],map:{text($0,0)}).first {
-            let ledger=try decoded(ResearchLedger.self,payload)
-            let reviews=try experimentReviews()
-            func cell(_ text:String)->String{text.replacingOccurrences(of:"|",with:"\\|").replacingOccurrences(of:"\n",with:" ")}
-            lines += ["","## 结构化实验记录与原文证据","","字段按原文匹配；复杂表格的行列对应仍须人工核对。全文原始证据独立保存，空缺不代表论文未报告。"]
-            for record in ledger.experiments {
-                lines += ["","### \(record.title)","","- 类型：\(record.kind == .dataProfile ? "数据资料（不作为实验效果）":"实验")","- 已提取字段：\(record.extracted ? "是":"否；完整原文已保留")","- 人工核对：\(reviews[record.id]?.reviewed == true ? "已核对":"待核对")","- 数据集：\(record.dataset)","- 任务：\(record.task)","- 指标：\(record.metrics.joined(separator:", "))","- 实验条件：\(record.conditions)","- 局限：\(record.limitations)",""]
-                if !record.measurements.isEmpty {
-                    lines += ["| 方法 / 行 | 指标 | 数值 | 条件 |","| --- | --- | --- | --- |"]
-                    for row in record.measurements {lines.append("| \(cell(row.method)) | \(cell(row.metric)) | \(cell(row.value)) | \(cell(row.condition)) |")}
-                }
-                for id in record.evidenceIDs {
-                    if let source=ledger.evidence.first(where:{$0.id == id}) {lines += ["","> \(source.text.replacingOccurrences(of:"\n",with:"\n> "))","","来源：第 \(source.page+1) 页 · \(source.section)",""]}
+                    lines += ["- \(point.text)", ""]
+                    if !point.quote.isEmpty {
+                        lines += ["> \(point.quote.replacingOccurrences(of:"\n",with:"\n> "))", "", "来源：第 \(point.page+1) 页。", ""]
+                    }
                 }
             }
         }

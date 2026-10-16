@@ -67,7 +67,7 @@ struct ResearchLibraryScreen: View {
                     }
                 }
             }
-        }.task { store.indexLibraryText() }
+        }
     }
     private var header: some View {
         VStack(alignment: .leading, spacing: 13) {
@@ -83,10 +83,10 @@ struct ResearchLibraryScreen: View {
                     Button("导入 PDF…") { store.choosePDF() }
                     Button("导入链接…") { store.showLink = true }
                     Divider()
-                    Button("整理尚无完整汇总的论文") {
+                    Button("生成尚无前三页摘要的论文") {
                         store.startResearch(
                             store.papers.filter {
-                                store.digests[$0.id] == nil || store.digests[$0.id]?.isPartial == true
+                                !PaperSummary.isCurrent(store.digests[$0.id])
                             })
                     }
                     .disabled(store.researchBusy || store.searching)
@@ -115,7 +115,7 @@ struct ResearchLibraryScreen: View {
                     store.libraryQuery.isEmpty || store.searching || store.researchBusy)
             }.font(.system(size: 12)).padding(11).background(.white, in: RoundedRectangle(cornerRadius: 9)).overlay(
                 RoundedRectangle(cornerRadius: 9).stroke(Palette.line, lineWidth: 1))
-            Text("每篇论文一个索引，以 AI 概览为主；原文与实验表保留供阅读核对。").font(.system(size:10)).foregroundStyle(Palette.muted)
+            Text("只读 PDF 前三页，生成中文摘要；每篇只用这份摘要建立一个向量。资料和笔记支持关键词检索。").font(.system(size:10)).foregroundStyle(Palette.muted)
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 10) {
                     filters
@@ -145,10 +145,6 @@ struct ResearchLibraryScreen: View {
                         }
                     }
                 }
-            }
-            if store.extractingLibrary {
-                Label("正在提取已有论文的原文证据…", systemImage: "doc.text.magnifyingglass").font(.system(size: 10))
-                    .foregroundStyle(Palette.muted)
             }
             if !store.searchMessage.isEmpty {
                 Text(store.searchMessage).font(.system(size: 10)).foregroundStyle(Palette.muted).textSelection(.enabled)
@@ -324,7 +320,7 @@ struct ResearchPaperDetail: View {
         self.store = store
         self.paper = paper
         let source = store.searchHits.first { $0.paperID == paper.id }?.source
-        _tab = State(initialValue: source == "笔记" ? 2 : (["汇总","论文概览"].contains(source ?? "") ? 1 : (source == "实验记录" ? 3:0)))
+        _tab = State(initialValue: source == "笔记" ? 2 : (["汇总","论文概览","论文摘要"].contains(source ?? "") ? 1 : 0))
     }
     private var notes: [PaperNote] {
         let values = store.researchNotes.filter { $0.paperID == paper.id }
@@ -357,8 +353,7 @@ struct ResearchPaperDetail: View {
                 }
                 Picker("论文详情", selection: $tab) {
                     Text("档案").tag(0)
-                    Text("实验与证据").tag(3)
-                    Text("AI 概览").tag(1)
+                    Text("AI 摘要").tag(1)
                     Text("笔记 \(notes.count)").tag(2)
                 }.pickerStyle(.segmented)
             }.padding(22)
@@ -372,7 +367,6 @@ struct ResearchPaperDetail: View {
                     switch tab {
                     case 0: archive
                     case 1: digest
-                    case 3: experimentalRecords
                     default: personalNotes
                     }
                 }.padding(22).frame(maxWidth: .infinity, alignment: .leading)
@@ -380,7 +374,7 @@ struct ResearchPaperDetail: View {
         }.onChange(of: store.digests[paper.id]?.id) { tab = 1 }
             .onChange(of: store.searchHits.first { $0.paperID == paper.id }?.source) {
                 if let source = store.searchHits.first(where: { $0.paperID == paper.id })?.source {
-                    if source == "笔记" { tab = 2 } else if source == "汇总" { tab = 1 } else if source == "实验记录" {tab=3}
+                    if source == "笔记" { tab = 2 } else if ["汇总", "论文摘要", "论文概览"].contains(source) { tab = 1 }
                 }
             }
             .confirmationDialog(
@@ -416,7 +410,7 @@ struct ResearchPaperDetail: View {
             Button("编辑文献信息与分类…") { store.metadataEditor = paper }
             Button("导出档案与笔记 Markdown…") { store.exportArchive(paper) }
             Divider()
-            Button("重新提取正文并整理") { store.startResearch([paper], refreshText: true) }.disabled(
+            Button("重新读取前三页并生成摘要") { store.startResearch([paper], refreshText: true) }.disabled(
                 store.researchBusy || store.searching)
             Button("建立 / 更新检索索引") { store.startResearch([paper], summarize: false) }.disabled(
                 store.researchBusy || store.searching)
@@ -459,21 +453,18 @@ struct ResearchPaperDetail: View {
             if let status = store.textStatuses[paper.id] {
                 Label(
                     status.chunkCount == 0
-                        ? "未提取到文字；扫描件需先 OCR" : "\(status.totalPages) 页原文已保存 · 每篇一个概览索引",
+                        ? "开头未提取到文字；扫描件需先 OCR" : (paper.kind == "PDF" ? "只读取前 \(min(3, status.totalPages)) 页 · 原文件共 \(status.totalPages) 页" : "只读取网页开头最多 15,000 字符"),
                     systemImage: status.chunkCount == 0 ? "doc.viewfinder" : "doc.text.magnifyingglass"
                 ).font(.system(size: 11)).foregroundStyle(Palette.muted)
             }
             Divider()
-            if let ledger=store.ledgers[paper.id] {
-                Button("查看实验记录与原文证据（\(ledger.experiments.filter{$0.kind == .experiment}.count)）"){tab=3}.buttonStyle(.bordered)
-            }
             if let digest = store.digests[paper.id] {
-                Text(digest.isPartial == true ? "阶段概览 · 全文尚未完成" : "一句话回顾").font(.system(size: 14, weight: .semibold))
+                Text("一句话回顾").font(.system(size: 14, weight: .semibold))
                 Text(digest.oneLine).font(.system(size: 13)).lineSpacing(5).textSelection(.enabled)
-                Button(digest.isPartial == true ? "查看阶段概览与证据" : "查看 AI 概览与证据") { tab = 1 }.buttonStyle(.bordered)
+                Button("查看中文摘要") { tab = 1 }.buttonStyle(.bordered)
             } else {
                 Text("还没有 AI 汇总").font(.system(size: 14, weight: .semibold))
-                Text("整理会提取研究问题、方法、贡献和局限，并保留可回到原文的证据。个人笔记与手工资料会单独保留。").font(.system(size: 12)).foregroundStyle(
+                Text("只根据前三页的摘要和引言整理研究动机、核心方法与实验结果；未报告的内容会明确标注。").font(.system(size: 12)).foregroundStyle(
                     Palette.muted
                 ).lineSpacing(5)
                 analyzeButton
@@ -494,152 +485,37 @@ struct ResearchPaperDetail: View {
         } label: {
             Label(
                 store.digests[paper.id] == nil
-                    ? "用本地模型整理论文" : (store.digests[paper.id]?.isPartial == true ? "继续全文整理" : "更新 AI 汇总"),
+                    ? "生成前三页摘要" : "更新前三页摘要",
                 systemImage: "sparkles")
         }.buttonStyle(PrimaryButton()).disabled(store.researchBusy || store.searching)
     }
     @ViewBuilder private var digest: some View {
         if let digest = store.digests[paper.id] {
-            if digest.isPartial == true {
-                Label("阶段预览：仅基于 \(digest.processedPages) 个有文字页面，全文尚未完成。可先阅读；如已取消，可继续整理。", systemImage: "clock").font(
-                    .system(size: 12, weight: .medium)
-                ).foregroundStyle(Palette.orange).padding(12).frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Palette.orange.opacity(0.07), in: RoundedRectangle(cornerRadius: 9))
-            }
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 7) {
-                    Text(digest.oneLine).font(.system(size: 17, weight: .medium, design: .serif)).lineSpacing(6)
-                        .textSelection(.enabled)
-                    Text("AI 生成 · \(digest.created.formatted(date:.abbreviated,time:.shortened))").font(
-                        .system(size: 10)
-                    ).foregroundStyle(Palette.muted)
-                }
-                Spacer()
-            }
-            Text(digest.pipeline == ResearchModels.structuredVersion ? "基于已保存的实验记录和 \(digest.processedPages) 页重点证据生成；原文件共 \(digest.totalPages) 页。全部文字另存供检索，未逐段交给大模型，未解读图片。指标直接取自实验记录，请核对表头、条件及解释。" : "旧版分层汇总：已处理含文字的 \(digest.processedPages) 页 / 原文件共 \(digest.totalPages) 页；仅分析文字层，未解读图片或图表。可重新整理生成结构化记录。"
-            ).font(
-                .system(size: 10)
-            ).foregroundStyle(Palette.muted).lineSpacing(4)
-            if store.textStatuses[paper.id]?.sourceHash != digest.sourceHash {
-                Label("原文已变化，建议更新汇总", systemImage: "arrow.clockwise").font(.system(size: 11)).foregroundStyle(
-                    Palette.orange)
-            }
-            if digest.rejectedEvidence > 0 {
-                Text("本次丢弃了 \(digest.rejectedEvidence) 条无法与原文匹配的引用。缺少证据的要点未显示。").font(.system(size: 10))
-                    .foregroundStyle(Palette.orange)
-            }
-            if let rejected=digest.rejectedFields,rejected>0 {
-                Text("\(rejected) 个字段或定位需要进一步核对，已保留可匹配部分与完整原文；详见实验记录。").font(.system(size:10)).foregroundStyle(Palette.orange)
-            }
-            VStack(alignment: .leading, spacing: 10) {
-                Text("建议分类：\(digest.suggestedCategory.isEmpty ? "未明确" : digest.suggestedCategory)").font(
-                    .system(size: 12, weight: .medium))
-                Text(digest.suggestedTags.joined(separator: " · ")).font(.system(size: 11)).foregroundStyle(
-                    Palette.muted)
-                DisclosureGroup("核对文献资料建议") {
-                    VStack(alignment: .leading, spacing: 10) {
-                        meta("标题", digest.suggestedTitle)
-                        meta("作者", digest.suggestedAuthors.joined(separator: ", "))
-                        meta("年份", digest.suggestedYear)
-                        meta("出处", digest.suggestedVenue)
-                        meta("DOI", digest.suggestedDOI)
-                        meta("arXiv", digest.suggestedArxiv)
-                    }.padding(.vertical, 8)
-                }.font(.system(size: 11))
-                Button("采用分类与空缺资料建议") { store.applySuggestions(digest, to: paper) }.buttonStyle(.bordered).font(
-                    .system(size: 11))
-                Text("仅补全空缺资料、未分类项并合并标签；已有手工内容保留。作者和年份等建议仍需对照首页核对。").font(.system(size: 10)).foregroundStyle(
-                    Palette.muted)
-            }.padding(14).frame(maxWidth: .infinity, alignment: .leading).background(
-                Palette.pale, in: RoundedRectangle(cornerRadius: 10))
-            ForEach(DigestTopic.allCases, id: \.rawValue) { topic in
-                VStack(alignment: .leading, spacing: 12) {
-                    Text(topic.title).font(.system(size: 15, weight: .semibold))
+            Text(digest.oneLine).font(.system(size: 17, weight: .medium, design: .serif)).lineSpacing(6).textSelection(.enabled)
+            Text("AI 生成 · \(digest.created.formatted(date: .abbreviated, time: .shortened))").font(.system(size: 10)).foregroundStyle(Palette.muted)
+            Text(PaperSummary.isCurrent(digest) ? (paper.kind == "PDF" ? "仅依据前 \(min(3, digest.totalPages)) 页文字（原文件共 \(digest.totalPages) 页）。实验结果为作者在摘要或引言中的报告，未核验后文实验。" : "仅依据网页开头最多 15,000 字符。实验结果为开头内容中的报告。") : "历史摘要：请更新为前三页摘要后再建立向量索引。")
+                .font(.system(size: 11)).foregroundStyle(Palette.muted).lineSpacing(4)
+            ForEach(PaperSummary.topics, id: \.rawValue) { topic in
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(PaperSummary.title(topic)).font(.system(size: 15, weight: .semibold))
                     let points = digest.points.filter { $0.topic == topic }
-                    if points.isEmpty { Text("本次未提取到有证据的要点。").font(.system(size: 11)).foregroundStyle(Palette.muted) }
+                    if points.isEmpty { Text("开头内容未明确报告。").foregroundStyle(Palette.muted) }
                     ForEach(points) { point in
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text(point.text).font(.system(size: 13)).lineSpacing(5).textSelection(.enabled)
-                            DisclosureGroup {
-                                Text(point.quote).font(.system(size: 12, design: .serif)).foregroundStyle(Palette.muted)
-                                    .lineSpacing(5).textSelection(.enabled).padding(.vertical, 5)
-                                Button(paper.kind == "PDF" ? "打开第 \(point.page+1) 页核对" : "回到网页正文") {
-                                    store.open(paper, page: point.page)
-                                }.buttonStyle(.bordered).font(.system(size: 11))
-                            } label: {
-                                Label(
-                                    paper.kind == "PDF" ? "原文证据 · 第 \(point.page+1) 页" : "原文证据 · 网页片段",
-                                    systemImage: "quote.bubble"
-                                ).font(.system(size: 10)).foregroundStyle(Palette.green)
-                            }
-                        }.padding(14).background(.white.opacity(0.7), in: RoundedRectangle(cornerRadius: 9))
+                        Text(point.text).font(.system(size: 13)).lineSpacing(6).textSelection(.enabled)
                     }
-                }
+                }.padding(15).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.white.opacity(0.7), in: RoundedRectangle(cornerRadius: 9))
+            }
+            if !digest.suggestedCategory.isEmpty {
+                Text("建议分类：" + digest.suggestedCategory + " / " + digest.suggestedTags.joined(separator: " / "))
+                    .font(.system(size: 11)).foregroundStyle(Palette.muted)
+                Button("采用分类与标签") { store.applySuggestions(digest, to: paper) }.buttonStyle(.bordered)
             }
             analyzeButton
-            Text("模型：\(digest.model)").font(.system(size: 9, design: .monospaced)).foregroundStyle(Palette.muted)
-                .textSelection(.enabled)
+            Text(digest.model).font(.system(size: 9, design: .monospaced)).foregroundStyle(Palette.muted)
         } else {
-            VStack(alignment: .leading, spacing: 16) {
-                Text("把全文整理成下次读得懂的线索。").font(.system(size: 20, design: .serif))
-                Text("先保存实验表、条件和原文证据，再提取结构化字段，最后生成概览。全文用于检索，重点证据交给本机模型；个人笔记独立保留，可取消后继续。").font(.system(size: 12)).lineSpacing(6)
-                    .foregroundStyle(Palette.muted)
-                analyzeButton
-            }
-        }
-    }
-    @ViewBuilder private var experimentalRecords:some View {
-        if let ledger=store.ledgers[paper.id] {
-            let experiments=ledger.experiments.filter{$0.kind == .experiment}
-            VStack(alignment:.leading,spacing:16) {
-                Text("先留证据，再写概览").font(.system(size:20,design:.serif))
-                Text("全文保留 \(ledger.evidence.count) 份证据块；识别 \(experiments.count) 项实验、\(ledger.experiments.filter{$0.kind == .dataProfile}.count) 项数据资料。模型已提取 \(experiments.filter(\.extracted).count)/\(experiments.count) 项实验字段，实际提供 \(ledger.analyzedEvidenceIDs.count) 份重点证据。未提取项目仍可展开完整原文。").font(.system(size:11)).foregroundStyle(Palette.muted).lineSpacing(4)
-                Text("数值按原文复制并匹配证据，尚未自动验证复杂表格的行列对应。请核对数据集、指标、方法和条件；空缺表示该证据未明确提供。").font(.system(size:11)).foregroundStyle(Palette.orange).lineSpacing(4)
-                if ledger.experiments.isEmpty {Text("没有自动识别到实验表或明确的实验段落。原文仍可检索，也可选取关键结果保存个人笔记。").font(.system(size:12))}
-                ForEach(ledger.experiments) { record in
-                    VStack(alignment:.leading,spacing:12) {
-                        HStack(alignment:.top) {
-                            Text(record.title).font(.system(size:13,weight:.semibold)).textSelection(.enabled)
-                            Spacer()
-                            Toggle("已核对",isOn:Binding(get:{store.experimentReviews[record.id]?.reviewed ?? false},set:{ value in
-                                var review=store.experimentReviews[record.id] ?? ExperimentReview(paperID:paper.id,experimentID:record.id)
-                                review.reviewed=value;store.saveExperimentReview(review)
-                            })).toggleStyle(.checkbox).font(.system(size:10)).fixedSize()
-                        }
-                        if record.kind == .dataProfile {
-                            Label("数据资料 · 不作为实验效果",systemImage:"tray.full").font(.system(size:11)).foregroundStyle(Palette.muted)
-                        } else {
-                            if !record.extracted {Text("原文已保存，模型字段尚未完成；可继续整理。").font(.system(size:11)).foregroundStyle(Palette.orange)}
-                            meta("数据集",record.dataset);meta("任务",record.task);meta("指标",record.metrics.joined(separator:", "))
-                            meta("实验条件",record.conditions);meta("局限",record.limitations)
-                            if !record.measurements.isEmpty {Text("以下为代表数值，完整表格和其他指标保留在原文证据中。").font(.system(size:10)).foregroundStyle(Palette.muted)}
-                            ForEach(record.measurements) {row in
-                                VStack(alignment:.leading,spacing:5) {
-                                    Text("\(row.method) · \(row.metric) = \(row.value)").font(.system(size:12,weight:.medium,design:.monospaced)).textSelection(.enabled)
-                                    if !row.condition.isEmpty {Text(row.condition).font(.system(size:11)).foregroundStyle(Palette.muted).textSelection(.enabled)}
-                                    Text(row.quote).font(.system(size:11,design:.serif)).foregroundStyle(Palette.muted).textSelection(.enabled)
-                                }.padding(10).frame(maxWidth:.infinity,alignment:.leading).background(Palette.pale,in:RoundedRectangle(cornerRadius:7))
-                            }
-                            if record.measurements.isEmpty && record.extracted {Text("未保存可核对的代表数值；完整表格保留在下方原文中。").font(.system(size:11)).foregroundStyle(Palette.muted)}
-                            if record.rejectedFields>0 {Text("已留空或剔除 \(record.rejectedFields) 个无法按原文匹配的字段，请展开证据核对。").font(.system(size:10)).foregroundStyle(Palette.orange)}
-                        }
-                        ForEach(record.evidenceIDs,id:\.self) {id in
-                            if let source=ledger.evidence.first(where:{$0.id == id}) {
-                                DisclosureGroup("完整原文证据 · 第 \(source.page+1) 页") {
-                                    Text(source.text).font(.system(size:11,design:.monospaced)).lineSpacing(3).textSelection(.enabled).padding(.vertical,8)
-                                    HStack {
-                                        Button("打开原文核对"){store.open(paper,page:source.page)}.buttonStyle(.bordered)
-                                        Button("记录想法或疑问") {store.noteEditor=PaperNote(paperID:paper.id,title:record.title,quote:source.text,page:source.page)}.buttonStyle(.bordered)
-                                    }.font(.system(size:11))
-                                }.font(.system(size:11)).foregroundStyle(Palette.green)
-                            }
-                        }
-                    }.padding(16).background(.white.opacity(0.8),in:RoundedRectangle(cornerRadius:10))
-                }
-                analyzeButton
-            }
-        } else {
-            Text("点击整理后，会先提取并保存实验记录和原文证据。").font(.system(size:12)).foregroundStyle(Palette.muted)
+            Text("用三页，留住论文的主要思路。").font(.system(size: 20, design: .serif))
+            Text("本地模型只阅读 PDF 前三页，按研究动机、核心方法、实验结果生成中文摘要，再用摘要建立每篇唯一的语义索引。网页使用开头的有限正文。没有报告的结果会明确写出。").font(.system(size: 12)).lineSpacing(6).foregroundStyle(Palette.muted)
             analyzeButton
         }
     }
@@ -752,7 +628,7 @@ struct ResearchNoteEditor: View {
                         ? (draft.page.map { "来自原文第 \($0+1) 页" } ?? "原文摘录") : "网页正文摘录"
                 ).font(.system(size: 10)).foregroundStyle(Palette.muted)
             }
-            Text("想法、疑问或实验记录 · 支持 Markdown").font(.system(size: 11)).foregroundStyle(Palette.muted)
+            Text("想法、疑问或待办 · 支持 Markdown").font(.system(size: 11)).foregroundStyle(Palette.muted)
             TextEditor(text: $draft.body).font(.system(size: 14)).scrollContentBackground(.hidden).padding(8).frame(
                 minHeight: 110, maxHeight: .infinity
             ).background(.white, in: RoundedRectangle(cornerRadius: 9)).overlay(
@@ -859,7 +735,7 @@ struct ResearchModelSettings: View {
     @ObservedObject var engines: EngineManager
     var body: some View {
         VStack(alignment: .leading, spacing: 15) {
-            Label("实验记录与检索 · v0.2.1", systemImage: "books.vertical").font(.system(size: 14, weight: .semibold))
+            Label("前三页摘要与检索 · v0.2.2", systemImage: "books.vertical").font(.system(size: 14, weight: .semibold))
             row("整理 · Qwen3.6 27B Q4", status: engines.analysisStatus, ready: engines.analysisReady)
             row("检索 · Qwen3 Embedding 0.6B", status: engines.embeddingStatus, ready: engines.embeddingReady)
             row("相关性复核 · Qwen3 Reranker 0.6B",status:engines.rerankerReady ? "已就绪 · 本机重排":"尚未就绪；需安装模型并重启本地引擎",ready:engines.rerankerReady)

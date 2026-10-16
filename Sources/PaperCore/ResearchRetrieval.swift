@@ -13,10 +13,10 @@ public struct ResearchPassage: Codable,Equatable,Identifiable,Sendable {
     public var vector:[Float]=[]
     public var vectorModel:String=""
     public var semanticEligible:Bool
-    public var embeddingInput:String {"Title: \(title)\nSection: \(section)\n\(text)"}
+    public var embeddingInput:String {text}
     public init(paperID:String,source:String,sourceID:String,title:String,section:String,page:Int?,text:String,semanticEligible:Bool=true) {
         self.paperID=paperID;self.source=source;self.sourceID=sourceID;self.title=title;self.section=section;self.page=page;self.text=text;self.semanticEligible=semanticEligible
-        id=ResearchText.hash(ResearchStructure.indexVersion+paperID+source+sourceID+title+section+text)
+        id=ResearchText.hash(PaperSummary.indexVersion+paperID+source+sourceID+section+text)
     }
 }
 
@@ -125,23 +125,11 @@ extension Database {
     }
     func syncPassages(_ paper:Paper,record:PaperRecord,notes:[PaperNote],digest:PaperDigest?) throws {
         let previous=Dictionary(try passages(paperID:paper.id).map{($0.id,$0)},uniquingKeysWith:{$1})
-        var sections:[String]=[]
-        if let digest {
-            sections += ["AI 概览："+String(digest.oneLine.prefix(250)),"分类与标签："+digest.suggestedCategory+" "+digest.suggestedTags.joined(separator:" ")]
-            // Retain every research topic within a bounded paper-level card.
-            for topic in DigestTopic.allCases {
-                let points=digest.points.filter{$0.topic == topic}.map{String($0.text.prefix(220))}.joined(separator:" ")
-                if !points.isEmpty {sections.append(topic.title+": "+String(points.prefix(topic == .results ? 700:300)))}
-            }
-        } else {
-            sections.append("尚未生成 AI 概览，当前按标题与手工资料检索。")
-        }
-        sections.append("文献资料："+String(record.searchable.prefix(350)))
-        // Personal prose supplements the overview. Long original quotes and tables
-        // remain in the evidence ledger and are never embedded separately.
-        let noteText=notes.map{[$0.title,$0.body].joined(separator:" ")}.joined(separator:"\n")
-        if !noteText.isEmpty {sections.append("个人笔记："+String(noteText.prefix(650)))}
-        var unit=ResearchPassage(paperID:paper.id,source:digest == nil ? "档案（待概览）":"论文概览",sourceID:paper.id,title:paper.title,section:"Paper overview and personal notes",page:nil,text:String(sections.joined(separator:"\n").prefix(3600)))
+        try write("DELETE FROM research_passages WHERE paper_id=?", [paper.id])
+        try write("DELETE FROM passage_search WHERE paper_id=?", [paper.id])
+        guard let summary = PaperSummary.indexText(digest) else { return }
+        var unit = ResearchPassage(paperID: paper.id, source: "论文摘要", sourceID: paper.id,
+            title: paper.title, section: PaperSummary.version, page: nil, text: summary)
         if let old=previous[unit.id] {
             unit.vector=old.vector;unit.vectorModel=old.vectorModel
         }
