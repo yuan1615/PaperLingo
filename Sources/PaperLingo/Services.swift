@@ -32,7 +32,7 @@ enum LocalAPI {
         }
         return data
     }
-    static func translate(_ text: String, model: String) async throws -> String {
+    static func translate(_ text: String, model: String,port:Int=11434) async throws -> String {
         let prompt = """
         You are a professional English (en) to Chinese (zh-Hans) translator. Your goal is to accurately convey the meaning and nuances of the original English text while adhering to Chinese grammar, vocabulary, and cultural sensitivities.
         Produce only the Chinese translation, without any additional explanations or commentary. Please translate the following English text into Chinese:
@@ -40,7 +40,7 @@ enum LocalAPI {
 
         \(text)
         """
-        let data = try await request(port: 11434, path: "/api/chat", body: [
+        let data = try await request(port: port, path: "/api/chat", body: [
             "model": model, "stream": false,
             "messages": [["role": "user", "content": prompt]],
             "options": ["temperature": 0.1, "num_ctx": 4096, "num_predict": 2048],
@@ -71,6 +71,7 @@ enum LocalAPI {
     private var ollama: Process?
     private var speech: Process?
     private var logHandles: [String:FileHandle] = [:]
+    private var lifecycle=UUID()
     let runtime: URL
     let workDirectory: URL
     let bundled: Bool
@@ -112,32 +113,40 @@ enum LocalAPI {
         if translationReady && speechReady {error=nil}
     }
     func start() async {
+        let token=lifecycle
         error = nil
         await check()
+        guard lifecycle == token else {return}
         do {
             try paths.prepare()
             if !translationReady, ollama?.isRunning != true {
                 // A reachable Ollama with a missing model must not be shadowed by another process.
-                if (try? await LocalAPI.request(port: 11434, path: "/api/version")) == nil {
+                let reachable=try? await LocalAPI.request(port:11434,path:"/api/version")
+                guard lifecycle == token else {return}
+                if reachable == nil,ollama?.isRunning != true {
                     ollama = try launch(runtime.appendingPathComponent("bin/ollama"), args: ["serve"], log: "ollama.log")
                 }
             }
             if !speechReady, speech?.isRunning != true {
-                if (try? await LocalAPI.request(port:8765,path:"/health")) != nil {
+                let reachable=try? await LocalAPI.request(port:8765,path:"/health")
+                guard lifecycle == token else {return}
+                if reachable != nil,speech?.isRunning != true {
                     throw AppError.message("8765 端口已有其他版本的语音服务，请退出旧版 PaperLingo 后重试。")
                 }
                 guard FileManager.default.fileExists(atPath: runtime.appendingPathComponent("models.ready").path) else { throw AppError.message(bundled ? "安装包缺少模型，请重新复制完整的 PaperLingo.app。" : "模型还未下载完成。请运行「安装本地模型.command」，在安装日志中查看进度。") }
                 let marker=try Data(contentsOf:runtime.appendingPathComponent("models.ready"))
                 let manifest=try JSONSerialization.jsonObject(with:marker) as? [String:String]
                 guard let modelPath=manifest?["omnivoice"],FileManager.default.fileExists(atPath:paths.modelURL(modelPath).path) else {throw AppError.message(bundled ? "安装包中的 OmniVoice 模型不完整，请重新复制完整应用。" : "OmniVoice 模型路径无效，请重新运行安装脚本。")}
-                speech = try launch(runtime.appendingPathComponent("venv/bin/python"), args: [engineScript.path,"--model",paths.modelURL(modelPath).path,"--cache",workDirectory.appendingPathComponent("audio-cache").path,"--reranker",runtime.appendingPathComponent("models/Qwen3-Reranker-0.6B").path], log: "omnivoice.log")
+                if speech?.isRunning != true {speech = try launch(runtime.appendingPathComponent("venv/bin/python"), args: [engineScript.path,"--model",paths.modelURL(modelPath).path,"--cache",workDirectory.appendingPathComponent("audio-cache").path,"--reranker",runtime.appendingPathComponent("models/Qwen3-Reranker-0.6B").path], log: "omnivoice.log")}
             }
             for _ in 0..<12 {
                 try await Task.sleep(for: .milliseconds(500))
+                guard lifecycle == token else {return}
                 await check()
                 if translationReady && speechReady { break }
             }
-        } catch { self.error = error.localizedDescription }
+        } catch {if lifecycle == token {self.error = error.localizedDescription}}
+        guard lifecycle == token else {return}
         await check()
     }
     private func launch(_ url: URL, args: [String], log: String) throws -> Process {
@@ -170,20 +179,23 @@ enum LocalAPI {
         try process.run(); return process
     }
     func stop() {
+        lifecycle=UUID()
         if ollama?.isRunning == true { ollama?.terminate() }
         if speech?.isRunning == true { speech?.terminate() }
         ollama = nil; speech = nil
         for handle in logHandles.values {try? handle.close()};logHandles.removeAll()
         Task { await check() }
     }
-    func pauseSpeechForResearch() async -> Bool {
+    func pauseSpeechForResearch(status:String="论文整理期间暂停，完成后恢复") async -> Bool {
         guard let speech,speech.isRunning else{return false}
         speech.terminate()
-        for _ in 0..<40 {
-            if !speech.isRunning {break}
-            try? await Task.sleep(for:.milliseconds(50))
-        }
-        self.speech=nil;speechReady=false;speechStatus="论文整理期间暂停，完成后恢复"
+        await Task.detached {
+            for _ in 0..<40 {
+                if !speech.isRunning {break}
+                try? await Task.sleep(for:.milliseconds(50))
+            }
+        }.value
+        self.speech=nil;speechReady=false;speechStatus=status
         try? logHandles.removeValue(forKey:"omnivoice.log")?.close()
         return true
     }
@@ -191,6 +203,7 @@ enum LocalAPI {
 
 @MainActor final class AudioService: NSObject, ObservableObject, AVAudioPlayerDelegate, AVSpeechSynthesizerDelegate {
     var researchBusy=false
+    var prepareForSpeech:(@MainActor () async -> Void)?
     @Published var busy = false
     @Published var playing = false
     @Published var generating = false
@@ -215,6 +228,18 @@ enum LocalAPI {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         guard text.count <= 12000 else { error = "选区过长，请分成小于 12,000 字符的段落朗读。"; return }
+        let token=generation
+        if let prepareForSpeech {
+            busy=true
+            task=Task {
+                await prepareForSpeech()
+                guard !Task.isCancelled,generation == token else {return}
+                busy=false
+                beginSpeaking(text,slow:slow)
+            }
+        } else {beginSpeaking(text,slow:slow)}
+    }
+    private func beginSpeaking(_ text:String,slow:Bool) {
         let provider = UserDefaults.standard.string(forKey: "speechProvider") ?? "omnivoice"
         let voice = UserDefaults.standard.string(forKey: "voiceAccent") ?? "american"
         let speed = slow ? 0.75 : 1.0
@@ -330,6 +355,12 @@ enum LocalAPI {
         Task { @MainActor in
             guard finished === self.utterance else { return }
             self.utterance = nil; self.playing = false; self.paused = false
+        }
+    }
+    nonisolated func speechSynthesizer(_ synthesizer:AVSpeechSynthesizer,didStart started:AVSpeechUtterance) {
+        Task { @MainActor in
+            guard started === self.utterance,self.paused else {return}
+            synthesizer.pauseSpeaking(at:.immediate)
         }
     }
 }

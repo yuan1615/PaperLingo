@@ -2,6 +2,22 @@
 
 Notable changes are recorded here. Version numbers follow `MAJOR.MINOR.PATCH`; v0.x releases may change behavior and data formats.
 
+## [0.2.7] - 2026-10-20
+
+### Added
+
+- Contextual vocabulary explanations with the installed Qwen3.6 27B model: concise meaning, interpretation in the saved paper sentence and one usage hint. Reading selections continue to use TranslateGemma alone.
+- Automatically explain only the expanded word or phrase after a short debounce, cache it locally, and reuse cached explanations during review without model inference. Preserve the original translation and learning statistics.
+- Bounded local input, disabled thinking, limited output, a 45-second inference deadline, explicit retry, cancellation and model unloading. Foreground translation, speech, paper processing and semantic search take priority.
+- Compact vocabulary layout with the original sentence, highlighted term, source link and speech controls beside its explanation.
+- Database schema 5 adds a separate explanation cache after an automatic consistent backup; version 5 JSON exports include valid cached explanations. Changed contexts, prompts and model signatures invalidate stale results.
+
+### Fixed
+
+- Restore owned speech services independently of a cancelled explanation task, and prevent stopped engine startup from reviving services. Preserve pause requests made while waiting for model cleanup.
+
+Validation: 36 core checks, 29 isolated vocabulary/model-scheduling UI checks and 34 existing review UI checks passed. Three real word/phrase examples took 20.50 / 20.26 / 21.21 seconds with an unloaded model and produced 90 / 90 / 91 characters. Real cancellation and unloading during generation took about 0.39 seconds; real translation after preemption took about 4 seconds including model loading. Owned OmniVoice pause/restore/playback also passed. Synthetic diagnostics are not a general language-quality or hardware-performance guarantee. No new model weights or full offline DMG were generated.
+
 ## [0.2.6] - 2026-10-20
 
 ### Added
@@ -139,6 +155,7 @@ Validation scope and limitations are documented in [v0.2.1 verification](docs/VE
 - Model accuracy and gap-free speech playback are not guaranteed.
 - Offline app builds use ad-hoc signing by default and are not Apple-notarized.
 
+[0.2.7]: https://github.com/yuan1615/PaperLingo/releases/tag/v0.2.7
 [0.2.6]: https://github.com/yuan1615/PaperLingo/releases/tag/v0.2.6
 [0.2.5]: https://github.com/yuan1615/PaperLingo/releases/tag/v0.2.5
 [0.2.4]: https://github.com/yuan1615/PaperLingo/releases/tag/v0.2.4

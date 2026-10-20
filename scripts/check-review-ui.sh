@@ -6,7 +6,8 @@ cd "$PROJECT_ROOT"
 mkdir -p "$PROJECT_ROOT/.test-output"
 QA_DIR="$(mktemp -d "$PROJECT_ROOT/.test-output/review-ui.XXXXXX")"
 QA_APP="$QA_DIR/ReviewChecks.app"
-mkdir -p "$QA_APP/Contents/MacOS" "$QA_APP/Contents/Resources" "$QA_DIR/data"
+mkdir -p "$QA_APP/Contents/MacOS" "$QA_APP/Contents/Resources/engine" "$QA_DIR/data"
+cp engine/server.py engine/rerank.py "$QA_APP/Contents/Resources/engine/"
 python3 - "$PROJECT_ROOT" "$QA_DIR" "$QA_APP" <<'PY'
 import json, plistlib, sys, uuid
 from pathlib import Path
@@ -23,7 +24,7 @@ for source in Sources/PaperLingo/*.swift; do
 done
 swiftc -parse-as-library -O -target arm64-apple-macosx14.0 \
   -module-cache-path .build/ModuleCache -I .build/release/Modules -I Sources/CSQLite \
-  "${APP_SOURCES[@]}" Tests/PaperLingoUITests/ReviewLayoutChecks.swift \
+  "${APP_SOURCES[@]}" "${PAPERLINGO_UI_CHECK_SOURCE:-Tests/PaperLingoUITests/ReviewLayoutChecks.swift}" \
   .build/release/PaperCore.build/*.o -lsqlite3 -o "$QA_APP/Contents/MacOS/ReviewChecks"
 codesign --force --sign - "$QA_APP"
 PAPERLINGO_DATA_DIR="$QA_DIR/data" PAPERLINGO_ENGINE_WORK_DIR="$QA_DIR/Engine" \

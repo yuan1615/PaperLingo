@@ -128,6 +128,8 @@ extension AppStore {
         searchMessage = "正在本机理解检索意图…"
         searchTask = Task {
             do {
+                await yieldWordExplanation()
+                try Task.checkCancellation()
                 await engines.check()
                 guard engines.embeddingReady else { throw AppError.message("检索模型尚未安装；可先使用关键词，或到设置安装研究模型。") }
                 let signature = embeddingSignature
@@ -200,6 +202,7 @@ extension AppStore {
     func stopLocalEngines() {
         allowEngineRestore = false
         researchTask?.cancel()
+        pauseWordExplanation()
         audio.stop()
         engines.stop()
     }
@@ -225,6 +228,8 @@ extension AppStore {
         var pausedSpeech = false
         var didPauseAudio = false
         do {
+            await yieldWordExplanation()
+            try Task.checkCancellation()
             await engines.check()
             let ready = summarize ? engines.analysisReady : engines.embeddingReady
             guard ready else { throw AppError.message("所需研究模型尚未安装，请到设置安装。手工归档、笔记和关键词检索不受影响。") }

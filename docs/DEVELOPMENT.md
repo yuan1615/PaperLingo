@@ -76,7 +76,7 @@ v0.2.2 的 `PaperResearchBenchmark --source PDF --work DIRECTORY --port OLLAMA_P
 
 `PaperRetrievalBenchmark --input CORPUS_JSON --work DIRECTORY --port OLLAMA_PORT --rerank-port BRIDGE_PORT` 使用已保存的本版摘要检查中英文召回及无关查询过滤。输入数组元素为 `id/title`，可选 `digest` 指向本版 PaperDigest JSON；不加载 PDF，没有摘要的论文不建向量。不写用户库，服务须预先启动；内置语音合成查询适用于 OmniVoice 测试素材，小样本诊断不等于通用检索准确率。
 
-数据库 schema 为 4；`chinese-summary-only-v1` 只为新摘要建立一个检索单元。升级前备份数据库，清理旧实验和全文缓存，保留个人笔记及学习数据。当前整理不调用旧版实验提取接口；保留的旧数据类型和纯函数用于历史兼容及回归检查。重排模型继续使用 float32、eager attention、单文档无填充推理，避免已实测出现的批处理 NaN。
+数据库 schema 为 5；新增 `word_explanations` 缓存，原研究索引规则不变。`chinese-summary-only-v1` 只为新摘要建立一个检索单元。升级前备份数据库，清理旧实验和全文缓存，保留个人笔记及学习数据。当前整理不调用旧版实验提取接口；保留的旧数据类型和纯函数用于历史兼容及回归检查。重排模型继续使用 float32、eager attention、单文档无填充推理，避免已实测出现的批处理 NaN。
 
 离线 app 的搬迁 / 权重验证使用其内置 Python，命令见分发指南。实际结果与范围见 [v0.2.2 验证](VERIFICATION_V0.2.2.md) 和 [历史验证](VERIFICATION.md)。
 
@@ -117,7 +117,7 @@ PAPERLINGO_DATA_DIR="$(mktemp -d /tmp/paperlingo-dev.XXXXXX)" \
 - `PaperSummary` 与 `ResearchModels/Database/Client`：文献档案、独立笔记、FTS5、前三页输入、固定结构中文摘要与每篇一个摘要向量。持久化页码从零开始，界面显示时加一。旧实验类型只用于历史兼容，不参与当前整理流程。
 - `ResearchStore/Views`：任务与取消、一次摘要生成、分类采用、关键词与语义融合检索，以及摘要优先的研究库布局。笔记与手工元信息独立于模型结果。
 - `Readers/SelectionPopover`：PDF / 网页选区锚点、拖选结束后的就地操作和译文展示；弹层不参与正文布局，原文与译文独立滚动；滚动正文和调整窗口保留结果，在明确关闭、切换论文及退出阅读时清理。
-- 首次升级先通过 SQLite backup API 保存一致快照，再事务迁移到当前 `user_version=4`；不能用文件复制替代正在使用的 WAL 数据库备份。
+- 首次升级先通过 SQLite backup API 保存一致快照，再事务迁移到当前 `user_version=5`；不能用文件复制替代正在使用的 WAL 数据库备份。
 
 优先遵循相邻代码格式。修复数据库与队列问题时关注持久性、去重和取消边界；不要添加只复述实现的检查。提交前查看 `git diff --check`，确保没有权重、个人数据、日志或绝对开发机路径。
 
@@ -127,7 +127,7 @@ PAPERLINGO_DATA_DIR="$(mktemp -d /tmp/paperlingo-dev.XXXXXX)" \
 
 独立应用标识和数据库中的 16 项原生界面检查通过：合成诊断 PDF / 网页的 1,315 字符选区、本机 TranslateGemma 返回、原生滚动视图偏移后的结果保留、窗口调整、Esc、网页视口锚点、旧词条按来源页恢复、860 × 620 窗口完整原句和复习播放器布局。已查看原句末尾及评分按钮的渲染截图。滚动验证采用原生滚动视图操作；未自动覆盖真实触控板的所有连续手势。测试数据未写入正式学习库。
 
-当前修改不升级数据库 schema 或模型，不重新生成 v0.2.3 的完整模型镜像。历史原句恢复只读取已保存的 PDF 页或网页快照；来源缺失或匹配不明确时保留已有上下文，不编造后续文字，也不修改历史查阅和评分事件。
+v0.2.4 当时的修改不升级数据库 schema 或模型，不重新生成 v0.2.3 的完整模型镜像。历史原句恢复只读取已保存的 PDF 页或网页快照；来源缺失或匹配不明确时保留已有上下文，不编造后续文字，也不修改历史查阅和评分事件。
 
 ## v0.2.5 复习播放布局回归
 
@@ -148,3 +148,30 @@ bash scripts/check-review-ui.sh
 `ReviewContextText` 只为原句中的当前词条添加浅黄色底色与加粗；匹配忽略大小写、支持短语中的空白，按 Unicode 字母/数字边界排除更长词中的子串。按字面转义表达中的正则字符，不修改原句字符、保存数据或朗读输入。
 
 2026-10-20：Release 构建及既有 34 项原生 UI 回归检查通过。已查看独立数据中的单词、短语和 `C++` 预览，确认重复/大写形式均突出显示，`learn` 不误标 `learning` 或 `learner`。数据库和模型不变。
+
+## v0.2.7 词语语境讲解
+
+阅读翻译继续走 TranslateGemma。生词本只为展开的当前词条生成讲解；800 ms 防抖、单任务执行、原句/词条/提示词版本/模型签名缓存校验。只读取该词保存的 PDF 页或网页快照，模型输入限制为选词附近约 1,200 UTF-16 单元，保留完整原句用于界面展示。
+
+固定提示词与结构在 `Sources/PaperCore/WordExplanation.swift`：本句词义、结合原句、用法提示；目标合计约 100–180 字。`ResearchClient.explainWord` 关闭思考、上下文 3,072、输出最多 384 tokens、45 秒请求墙钟上限、`keep_alive=0`。过长、不完整和截断响应均不覆盖有效缓存，不自动重试。缺原句时明确标注，不编造文中含义。
+
+`VocabularyStore` 将讲解设为低优先级。翻译、语音、论文整理与语义检索在调用模型前取消并等待讲解任务完成清理；快速切换词条也等待旧请求卸载。只暂停 app 自己启动的语音进程，结束后按原生命周期恢复，不停止外部服务。已保存讲解可用于今日练习，复习页面不会发起新讲解。
+
+schema 5 在一致备份后只增加独立缓存表，词条删除时级联清理。讲解不修改原译文、查阅频率、到期时间或评分；过期响应保存前再次核对当前词条语境。JSON 备份版本升为 5，包含当前有效讲解。
+
+检查命令（原生 UI 需要桌面会话）：
+
+```bash
+swift run --disable-sandbox PaperCoreChecks
+bash scripts/check-vocabulary-ui.sh
+bash scripts/check-review-ui.sh
+# 先在独立端口启动本地 Ollama，避免和正式应用争抢资源
+swift run -c release --disable-sandbox PaperWordExplanationSmoke --port 11436 --work .test-output/word-smoke
+swift run -c release --disable-sandbox PaperWordExplanationSmoke --port 11436 --work .test-output/word-cancel --cancel-only --cancel-after 15
+```
+
+`check-vocabulary-ui.sh` 使用随机回环端口和独立 app / 数据库，模拟慢响应、断连、错误和输出上限，并使用系统语音验证前台抢占；它不下载或运行真实大模型。原生测试生成的截图和报告均留在忽略的 `.test-output/` 中。
+
+2026-10-20 的真实 Qwen3.6 样例在每次请求前卸载模型，三次耗时 20.50 / 20.26 / 21.21 秒，讲解长度 90 / 90 / 91 字符。`novel` 在方法与阅读材料两种语境中分别解释为“新颖的”和“小说”，另检查 `in contrast to`。加载约占 10 秒，操作系统文件缓存可能仍然温热；这些合成诊断不代表通用词典准确率或其他设备性能。加载阶段取消与卸载约 0.006 秒，进入生成阶段后约 0.388 秒，专用端口均无驻留模型；不含语音服务恢复时间。
+
+最终验证：36 项核心、29 项生词讲解/调度原生 UI 检查和 34 项原复习 UI 检查通过；另有 7 项真实模型集成检查，覆盖讲解取消后真实 TranslateGemma 的约 4 秒返回、自有 OmniVoice 服务暂停/恢复/实际播放，以及原学习记录保持不变。取消任务后的语音恢复使用独立取消上下文，启动生命周期标识防止停止引擎后意外重启。真实模型验收使用独立端口、合成词条与隔离数据，没有写入正式学习库。

@@ -16,11 +16,11 @@ public final class Database {
         guard sqlite3_open(url.path, &handle) == SQLITE_OK else { throw StorageError.sqlite("无法打开数据库") }
         sqlite3_busy_timeout(handle, 5000)
         let version = try rows("PRAGMA user_version") { Int(sqlite3_column_int($0,0)) }.first ?? 0
-        guard version <= 4 else { throw StorageError.sqlite("数据库由更新版本创建，请使用新版 PaperLingo。") }
-        if existed && version < 4 {
+        guard version <= 5 else { throw StorageError.sqlite("数据库由更新版本创建，请使用新版 PaperLingo。") }
+        if existed && version < 5 {
             let directory=url.deletingLastPathComponent().appendingPathComponent("Backups")
             try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:true)
-            let target=directory.appendingPathComponent("library-before-v0.2.2-\(UUID().uuidString).sqlite")
+            let target=directory.appendingPathComponent("library-before-\(version < 4 ? "v0.2.2" : "v0.2.7")-\(UUID().uuidString).sqlite")
             try backup(to:target)
             migrationBackupURL=target
         }
@@ -33,6 +33,7 @@ public final class Database {
         CREATE TABLE IF NOT EXISTS lookups(id INTEGER PRIMARY KEY,word_id TEXT,paper_id TEXT,text TEXT,context TEXT,page INTEGER,created REAL);
         CREATE TABLE IF NOT EXISTS reviews(id INTEGER PRIMARY KEY,word_id TEXT,grade TEXT,mode TEXT,created REAL,next_due REAL);
         CREATE INDEX IF NOT EXISTS vocabulary_due ON vocabulary(due);
+        CREATE TABLE IF NOT EXISTS word_explanations(word_id TEXT PRIMARY KEY REFERENCES vocabulary(id) ON DELETE CASCADE,payload TEXT NOT NULL);
         """)
         try migrateEvidenceSchema()
         try migrateResearchSchema()
@@ -42,7 +43,7 @@ public final class Database {
             try exec("DELETE FROM paper_ledgers; DELETE FROM experiment_reviews; DELETE FROM research_cache; DELETE FROM paper_analysis_cache; DELETE FROM paper_chunks; DELETE FROM paper_text_status;")
             needsIndexCompaction = true
         }
-        try exec("PRAGMA user_version=4; COMMIT;")
+        try exec("PRAGMA user_version=5; COMMIT;")
         } catch { try? exec("ROLLBACK"); throw error }
         if needsIndexCompaction {
             // Reclaim the retired page vectors/FTS storage once. A concurrent

@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import PaperCore
 import SwiftUI
 import UniformTypeIdentifiers
@@ -333,12 +334,14 @@ struct VocabularyScreen:View {
         return list.sorted{$0.due < $1.due}
     }
     var body:some View {
-        VStack(alignment:.leading,spacing:24) {
-            ScreenHeading(eyebrow:"WORDS WORTH KEEPING",title:"你读过的，正在成为你的。",subtitle:"从真实查阅中积累的单词、短语和句子。")
-            HStack(spacing:16) {
-                StatTile(title:"个人表达",value:"\(store.words.count)",detail:"从你的阅读中积累")
-                StatTile(title:"反复查阅",value:"\(store.words.filter{$0.lookups>1}.count)",detail:"更值得多练习一次")
-                StatTile(title:"今天到期",value:"\(store.dueWords.count)",detail:"每天最多练习 20 项")
+        VStack(alignment:.leading,spacing:18) {
+            HStack(alignment:.top) {
+                VStack(alignment:.leading,spacing:8) {
+                    Text("生词本").font(.system(size:25,weight:.medium,design:.serif))
+                    Text("展开一个表达，结合论文原句理解它的用法。").font(.system(size:12)).foregroundStyle(Palette.muted)
+                }
+                Spacer()
+                Text("\(store.words.count) 个表达 · \(store.dueWords.count) 项待复习").font(.system(size:11)).foregroundStyle(Palette.muted)
             }
             HStack(spacing:15) {
                 HStack {Image(systemName:"magnifyingglass").foregroundStyle(Palette.muted);TextField("搜索英文或中文",text:$search).textFieldStyle(.plain)}.padding(10).background(.white,in:RoundedRectangle(cornerRadius:8)).frame(maxWidth:330)
@@ -352,27 +355,94 @@ struct VocabularyScreen:View {
                 ScrollView { LazyVStack(spacing:10) {ForEach(filtered){word in WordRow(word:word,store:store)}}.padding(.bottom,15) }
             }
         }.padding(32)
+            .onAppear{store.focusVocabulary(filtered)}
+            .onDisappear{store.cancelWordExplanation()}
+            .onChange(of:search){_,_ in store.focusVocabulary(filtered)}
+            .onChange(of:kind){_,_ in store.focusVocabulary(filtered)}
+            .onChange(of:sort){_,_ in store.focusVocabulary(filtered)}
+            .onChange(of:store.researchBusy){_,busy in if !busy {store.resumeWordExplanationIfNeeded()}}
+            .onChange(of:store.searching){_,busy in if !busy {store.resumeWordExplanationIfNeeded()}}
+            .onReceive(store.audio.$playing.combineLatest(store.audio.$busy,store.audio.$generating).debounce(for:.milliseconds(800),scheduler:RunLoop.main)){state in
+                if !state.0 && !state.1 && !state.2 {store.resumeWordExplanationIfNeeded()}
+            }
     }
 }
 
 struct WordRow:View {
     let word:Vocabulary
     @ObservedObject var store:AppStore
-    @State private var expanded=false
+    var expanded:Bool {store.expandedWordID == word.id}
     var body:some View {
         VStack(alignment:.leading,spacing:14) {
             HStack(alignment:.top,spacing:18) {
                 VStack(alignment:.leading,spacing:7) {HStack {Text(word.text).font(.system(size:20,weight:.medium,design:.serif)).textSelection(.enabled);Text(word.kind).font(.system(size:9)).foregroundStyle(Palette.muted)};Text(word.translation).font(.system(size:12)).foregroundStyle(Palette.muted).textSelection(.enabled).lineLimit(expanded ? nil : 2)}.frame(maxWidth:.infinity,alignment:.leading)
                 VStack(alignment:.trailing,spacing:7) {Text("查阅 \(word.lookups) 次").font(.system(size:10,weight:.medium));Text(word.due <= Date() ? "待复习" : word.due.formatted(date:.abbreviated,time:.omitted)).font(.system(size:9)).foregroundStyle(word.due <= Date() ? Palette.orange : Palette.muted)}
                 Button {store.audio.speak(word.text)} label:{Image(systemName:"speaker.wave.2")}.buttonStyle(ReadingButtonStyle()).help("朗读")
-                Button {expanded.toggle()} label:{Image(systemName:expanded ? "chevron.up" : "chevron.down")}.buttonStyle(ReadingButtonStyle()).help("查看上下文")
+                Button {store.toggleWordDetails(word)} label:{Label("语境讲解",systemImage:expanded ? "chevron.up" : "chevron.down").font(.system(size:11))}.buttonStyle(ReadingButtonStyle()).help("展开原句与词语讲解")
                 Menu { Button("删除词条",role:.destructive) {store.deleteWord(word)} } label:{Image(systemName:"ellipsis")}.menuStyle(.borderlessButton).frame(width:17)
             }
             if expanded {
-                if !word.context.isEmpty {Text(word.context).font(.system(size:13,design:.serif)).lineSpacing(6).textSelection(.enabled).foregroundStyle(Palette.muted)}
+                WordExplanationPanel(word:word,store:store)
                 HStack {Label(word.paperTitle,systemImage:"doc.text").lineLimit(1);Text("· 遗忘 \(word.lapses) 次");Spacer();if let p=store.papers.first(where:{$0.id==word.paperID}) {Button("回到原文 →"){store.open(p,page:word.page)}.buttonStyle(ReadingButtonStyle()).foregroundStyle(Palette.green)}}.font(.system(size:10))
             }
         }.padding(20).background(.white.opacity(0.75),in:RoundedRectangle(cornerRadius:11)).overlay(RoundedRectangle(cornerRadius:11).stroke(Palette.line.opacity(0.6),lineWidth:1))
+    }
+}
+
+struct WordExplanationPanel:View {
+    let word:Vocabulary
+    @ObservedObject var store:AppStore
+    var body:some View {
+        let cached=store.explanation(for:word)
+        let source=cached?.sourceContext ?? word.context
+        VStack(alignment:.leading,spacing:12) {
+            HStack {
+                Label("语境讲解",systemImage:"text.book.closed").font(.system(size:12,weight:.semibold))
+                Spacer()
+                if store.wordExplanationTask != nil {
+                    ProgressView().controlSize(.small)
+                    Button("取消"){store.pauseWordExplanation()}.buttonStyle(.bordered).font(.system(size:11))
+                } else if word.kind != "句子",store.wordExplanationError == nil {
+                    Button(cached == nil ? "生成讲解" : "重新生成"){store.showWordDetails(word,force:true)}.buttonStyle(.bordered).font(.system(size:11))
+                }
+            }
+            if let cached {
+                WordExplanationContent(content:cached.content)
+                Text(cached.contextIsExcerpt ? "本地生成 · 依据选词附近片段" : "本地生成 · 已保存在本机").font(.system(size:10)).foregroundStyle(Palette.muted)
+            }
+            if let error=store.wordExplanationError {
+                Text(error).font(.system(size:11)).foregroundStyle(Palette.orange).fixedSize(horizontal:false,vertical:true)
+                Button("重试"){store.showWordDetails(word,force:true)}.buttonStyle(.bordered)
+            } else if cached == nil || store.wordExplanationTask != nil {
+                Text(store.wordExplanationMessage).font(.system(size:11)).foregroundStyle(Palette.muted)
+            }
+            if !source.isEmpty {
+                Divider()
+                HStack {
+                    Text("论文原句").font(.system(size:11,weight:.medium)).foregroundStyle(Palette.muted)
+                    Spacer()
+                    Button {store.audio.speak(source)} label:{Label("朗读原句",systemImage:"speaker.wave.2")}.buttonStyle(.bordered).font(.system(size:11))
+                }
+                ReviewContextText(context:source,expression:word.text).lineSpacing(5).textSelection(.enabled).fixedSize(horizontal:false,vertical:true)
+            }
+        }.padding(16).frame(maxWidth:.infinity,alignment:.leading).background(Palette.pale.opacity(0.45),in:RoundedRectangle(cornerRadius:10))
+    }
+}
+
+struct WordExplanationContent:View {
+    let content:WordExplanationDraft
+    var body:some View {
+        VStack(alignment:.leading,spacing:12) {
+            line("本句词义",content.meaning)
+            line("结合原句",content.inContext)
+            line("用法提示",content.usage)
+        }
+    }
+    private func line(_ title:String,_ text:String)->some View {
+        HStack(alignment:.top,spacing:12) {
+            Text(title).font(.system(size:11,weight:.semibold)).foregroundStyle(Palette.green).frame(width:52,alignment:.leading)
+            Text(text).font(.system(size:12)).lineSpacing(4).textSelection(.enabled).fixedSize(horizontal:false,vertical:true).frame(maxWidth:.infinity,alignment:.leading)
+        }
     }
 }
 
@@ -418,6 +488,9 @@ struct ReviewScreen:View {
                     if store.revealed {
                         Divider().padding(.horizontal,50)
                         Text(word.translation).font(.system(size:19)).multilineTextAlignment(.center).lineSpacing(7).textSelection(.enabled).lineLimit(nil).fixedSize(horizontal:false,vertical:true)
+                        if let cached=store.explanation(for:word) {
+                            WordExplanationContent(content:cached.content).padding(16).frame(maxWidth:620,alignment:.leading).background(Palette.pale.opacity(0.45),in:RoundedRectangle(cornerRadius:10))
+                        }
                         if !store.reviewContext.isEmpty && store.reviewContext != word.text {
                             Label("论文原句",systemImage:"doc.text").font(.system(size:12,weight:.medium)).foregroundStyle(Palette.muted)
                             ReviewContextText(context:store.reviewContext,expression:word.text).multilineTextAlignment(.center).lineSpacing(6).lineLimit(nil).fixedSize(horizontal:false,vertical:true).textSelection(.enabled).accessibilityIdentifier("review.context")

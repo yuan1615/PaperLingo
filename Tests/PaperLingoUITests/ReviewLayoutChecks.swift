@@ -28,9 +28,40 @@ import SwiftUI
         let found = (root as? T).map { [$0] } ?? []
         return found + root.subviews.flatMap { views(type, in: $0) }
     }
-    func elements(in root: Any, depth: Int = 0) -> [any NSAccessibilityProtocol] {
-        guard depth < 30, let element = root as? any NSAccessibilityProtocol else { return [] }
-        return [element] + (element.accessibilityChildren() ?? []).flatMap { elements(in: $0, depth: depth + 1) }
+    func speechButtonPoints() throws -> [NSPoint] {
+        let root=window.contentView!,scroll=try scrollView()
+        let card=scroll.convert(scroll.bounds,to:root)
+        guard let bitmap=root.bitmapImageRepForCachingDisplay(in:card) else {throw AppError.message("No card bitmap")}
+        root.cacheDisplay(in:card,to:bitmap)
+        var best:(count:Int,x:CGFloat,y:CGFloat)?
+        for y in stride(from:0,to:bitmap.pixelsHigh,by:3) {
+            var matches:[Int]=[]
+            for x in stride(from:0,to:bitmap.pixelsWide,by:3) {
+                guard let color=bitmap.colorAt(x:x,y:y) else {continue}
+                if abs(color.redComponent-0.21)<0.10 && abs(color.greenComponent-0.39)<0.07 && abs(color.blueComponent-0.31)<0.08 {matches.append(x)}
+            }
+            if matches.count>30,matches.count>(best?.count ?? 0),let first=matches.first,let last=matches.last {
+                best=(matches.count,CGFloat(first+last)/2,CGFloat(y))
+            }
+        }
+        guard let best else {
+            if let png=bitmap.representation(using:.png,properties:[:]) {try png.write(to:work.appendingPathComponent("card-diagnostic.png"))}
+            for view in views(NSScrollView.self,in:root) {print("SCROLL",view.bounds,view.visibleRect,view.convert(view.bounds,to:root),view.accessibilityIdentifier())}
+            throw AppError.message("Prominent source speech button is not visible")
+        }
+        let x=card.minX+best.x/CGFloat(bitmap.pixelsWide)*card.width
+        let offset=best.y/CGFloat(bitmap.pixelsHigh)*card.height
+        let y=root.isFlipped ? card.minY+offset : card.maxY-offset
+        // Keep both bitmap orientations for SDKs that cache flipped hosting views differently.
+        return [y,card.minY+card.maxY-y].map {window.convertPoint(toScreen:root.convert(NSPoint(x:x,y:$0),to:nil))}
+    }
+    func clickSpeech(expected:String) async throws {
+        for point in try speechButtonPoints() {
+            click(screen:point);await settle()
+            if store.audio.playing && store.audio.currentText == expected {return}
+            store.audio.stop()
+        }
+        throw AppError.message("Native source speech button did not play the expected text")
     }
     func click(screen point: NSPoint) {
         let local = window.convertPoint(fromScreen:point)
@@ -54,7 +85,7 @@ import SwiftUI
         return Data(bytes:pixels,count:bitmap.bytesPerRow*bitmap.pixelsHigh)
     }
     func scrollView() throws -> NSScrollView {
-        guard let scroll = views(NSScrollView.self, in: window.contentView!).max(by: { $0.bounds.width < $1.bounds.width }) else {
+        guard let scroll = views(NSScrollView.self, in: window.contentView!).max(by: { $0.visibleRect.width * $0.visibleRect.height < $1.visibleRect.width * $1.visibleRect.height }) else {
             throw AppError.message("Missing review scroll view")
         }
         return scroll
@@ -93,13 +124,10 @@ import SwiftUI
         window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps:true)
         await settle()
         try snapshot("review-original-button")
-        guard let expression = elements(in:window.contentView!).first(where:{$0.accessibilityIdentifier() == "review.expression"}) else {throw AppError.message("Missing expression frame")}
-        let expressionFrame = expression.accessibilityFrame()
         let scroll = try scrollView(), frame = window.convertToScreen(scroll.convert(scroll.bounds,to:nil))
-        // The native click is inside the prominent source-sentence button beside word speech.
-        let sourcePoint = NSPoint(x:frame.midX+65,y:expressionFrame.minY-43)
+        let sourcePoint = try speechButtonPoints()[0]
         try check(frame.contains(sourcePoint),"Original sentence button is visible without scrolling in an 860 × 620 window")
-        click(screen:sourcePoint); await settle()
+        try await clickSpeech(expected:sentence)
         try check(store.audio.playing && store.audio.currentText == sentence,"Original sentence button plays the complete source after a native click")
         click(screen:try controlPoint(fromRight:60)); await settle()
         try check(store.audio.paused,"Pause control pauses actual system speech")
@@ -153,9 +181,7 @@ import SwiftUI
         fullSentence.kind="句子"; fullSentence.context=fullSentence.text
         store.queue=[fullSentence]; store.reviewContext=fullSentence.text; await settle()
         try snapshot("review-sentence")
-        guard let sentenceExpression=elements(in:window.contentView!).first(where:{$0.accessibilityIdentifier() == "review.expression"}) else {throw AppError.message("Missing sentence expression")}
-        let card=try scrollView(), cardFrame=window.convertToScreen(card.convert(card.bounds,to:nil))
-        click(screen:NSPoint(x:cardFrame.midX,y:sentenceExpression.accessibilityFrame().minY-43)); await settle()
+        try await clickSpeech(expected:fullSentence.text)
         try check(store.audio.playing && store.audio.currentText == fullSentence.text,"Saved sentence cards expose their own complete-source playback button")
         store.audio.stop(); store.stopReviewContext()
     }

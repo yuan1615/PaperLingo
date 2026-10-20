@@ -310,7 +310,12 @@ static func main() {
 let suite=PaperCoreTests()
 let evidenceSuite=EvidenceTests()
 let summarySuite=SummaryTests()
+let wordSuite=WordExplanationTests()
 let checks:[(String,() throws -> Void)] = [
+    ("Bounded word explanation context",wordSuite.testBoundedContextKeepsLateTermAndUnicode),
+    ("Word explanation output validation",wordSuite.testOutputLimitsRejectIncompleteAndLongResults),
+    ("Contextual cache invalidation and learning preservation",wordSuite.testContextCachePreservesLearningAndRejectsStaleWrites),
+    ("v4 vocabulary explanation migration and WAL backup",wordSuite.testV4MigrationBacksUpWALAndKeepsOriginalRecords),
     ("First-three-page source boundary",summarySuite.testFirstThreePagesOnly),
     ("Summary-only vector and stable personal notes",summarySuite.testSummaryOnlyIndex),
     ("Retired experiment data migration",summarySuite.testMigrationRemovesRetiredCaches),

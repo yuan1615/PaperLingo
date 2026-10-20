@@ -8,7 +8,7 @@
 
 ## 构建
 
-以下命令按当前源码生成 v0.2.6。此前已验证并单独分发的完整模型镜像仍为 v0.2.3，不包含 v0.2.4–v0.2.6 的长句、复习播放与词语高亮更新；版本名不同的镜像应分别校验。
+以下命令按当前源码生成 v0.2.7。此前已验证并单独分发的完整模型镜像仍为 v0.2.3，不包含 v0.2.4–v0.2.7 的阅读、复习与语境讲解更新；版本名不同的镜像应分别校验。
 
 先完成 [开发指南](DEVELOPMENT.md) 中的基础与研究模型安装、真实推理检查，然后运行：
 
@@ -23,13 +23,13 @@ PAPERLINGO_CLONE_STAGE=1 PAPERLINGO_STAGE_ONLY=1 bash scripts/package-offline.sh
 
 ```text
 dist/
-  PaperLingo-0.2.6-Offline/
+  PaperLingo-0.2.7-Offline/
     PaperLingo.app
     Applications -> /Applications
     安装说明.txt
     Notice
-  PaperLingo-0.2.6-macOS-arm64-offline.dmg
-  PaperLingo-0.2.6-macOS-arm64-offline.dmg.sha256
+  PaperLingo-0.2.7-macOS-arm64-offline.dmg
+  PaperLingo-0.2.7-macOS-arm64-offline.dmg.sha256
 ```
 
 `PAPERLINGO_CLONE_STAGE=1` 在 macOS/APFS 上优先以独立的写时复制文件暂存大模型和大运行库，不创建指向项目的链接；原项目删除或移动后，暂存 app 的文件仍独立存在。不支持克隆时回退到普通复制，空间预检仍按完整逻辑体积计算。
@@ -45,7 +45,7 @@ python3 scripts/replace-executable.py \
 codesign --verify --deep --strict "$APP"
 ```
 
-脚本拒绝覆盖已有分发 app 中的 `Runtime/`。重新构建前先把旧 `dist/PaperLingo-0.2.6-Offline/` 整体移到其他目录保存，再执行脚本，避免混用旧资源。
+脚本拒绝覆盖已有分发 app 中的 `Runtime/`。重新构建前先把旧 `dist/PaperLingo-0.2.7-Offline/` 整体移到其他目录保存，再执行脚本，避免混用旧资源。
 
 ## 搬迁检查
 
@@ -56,7 +56,7 @@ PAPERLINGO_STAGE_ONLY=1 bash scripts/package-offline.sh
 
 # 将整个 app 完整复制到另一个目录，路径可包含空格
 mkdir -p /tmp/paperlingo-relocated
-cp -R dist/PaperLingo-0.2.6-Offline/PaperLingo.app /tmp/paperlingo-relocated/
+cp -R dist/PaperLingo-0.2.7-Offline/PaperLingo.app /tmp/paperlingo-relocated/
 
 # 用搬迁后 app 自己的 Python 校验权重、导入、MPS 和真实推理
 APP=/tmp/paperlingo-relocated/PaperLingo.app
@@ -68,14 +68,14 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 \
 # 确认资源签名未被推理改写，再从原分发目录制作镜像
 codesign --verify --deep --strict "$APP"
 PAPERLINGO_IMAGE_ONLY=1 bash scripts/package-offline.sh
-hdiutil verify dist/PaperLingo-0.2.6-macOS-arm64-offline.dmg
+hdiutil verify dist/PaperLingo-0.2.7-macOS-arm64-offline.dmg
 ```
 
 校验 SHA-256 时需先进入校验文件所在目录：
 
 ```bash
 cd dist
-shasum -a 256 -c PaperLingo-0.2.6-macOS-arm64-offline.dmg.sha256
+shasum -a 256 -c PaperLingo-0.2.7-macOS-arm64-offline.dmg.sha256
 ```
 
 上述检查不替代目标物理机器上的验收。`--smoke` 会启动专用回环端口上的引擎，结束时停止自己创建的服务；不操作用户学习数据库。

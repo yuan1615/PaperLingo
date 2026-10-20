@@ -139,6 +139,38 @@ public actor ResearchClient {
     public func unload(_ model: String) async {
         _ = try? await request("/api/generate", ["model": model, "stream": false, "keep_alive": 0], timeout: 10)
     }
+    public func explainWord(_ input: WordExplanationInput,timeout:TimeInterval=WordExplanationPolicy.timeout) async throws -> WordExplanationDraft {
+        let data = try await withThrowingTaskGroup(of: Data.self) { group in
+            group.addTask { try await self.wordExplanationData(input) }
+            group.addTask {
+                try await Task.sleep(for: .seconds(min(timeout,WordExplanationPolicy.timeout)))
+                throw ResearchError.message("本次讲解已超时，已停止生成并释放资源。可稍后重试。")
+            }
+            defer { group.cancelAll() }
+            return try await group.next()!
+        }
+        let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        guard object?["done_reason"] as? String != "length" else { throw ResearchError.message("讲解达到输出上限，未保存不完整内容。可点重试。") }
+        guard let message = object?["message"] as? [String: Any], let text = message["content"] as? String else {
+            throw ResearchError.message("本地模型未返回词语讲解。")
+        }
+        do {
+            var result=try JSONDecoder().decode(WordExplanationDraft.self, from: Data(text.utf8))
+            if input.context.isEmpty {result.inContext="未提供原句，无法判断文中具体含义"}
+            return try result.validated()
+        }
+        catch let error as ResearchError { throw error }
+        catch { throw ResearchError.message("讲解格式不完整，本次未保存，可点重试。") }
+    }
+    private func wordExplanationData(_ input: WordExplanationInput) async throws -> Data {
+        let properties: [String: Any] = Dictionary(uniqueKeysWithValues: ["meaning", "inContext", "usage"].map {
+            ($0, ["type": "string"] as [String: Any])
+        })
+        return try await request("/api/chat", ["model": ResearchModels.analysis, "stream": false, "think": false,
+            "format": ["type": "object", "properties": properties, "required": ["meaning", "inContext", "usage"], "additionalProperties": false],
+            "messages": [["role": "system", "content": WordExplanationPolicy.prompt], ["role": "user", "content": String(decoding: try JSONEncoder().encode(input), as: UTF8.self)]],
+            "options": ["temperature": 0, "num_ctx": 3072, "num_predict": 384], "keep_alive": 0], timeout: WordExplanationPolicy.timeout)
+    }
     public func rerank(query:String,documents:[String],port:Int=8765) async throws->[Double] {
         guard !documents.isEmpty else{return []}
         var request=URLRequest(url:URL(string:"http://127.0.0.1:\(port)/rerank")!)

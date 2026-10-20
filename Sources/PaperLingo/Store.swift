@@ -7,7 +7,7 @@ import UniformTypeIdentifiers
 enum Route: String, CaseIterable { case reading = "阅读空间", library="研究库", vocabulary = "生词本", review = "今日练习", settings = "设置" }
 
 @MainActor final class AppStore: ObservableObject {
-    @Published var route: Route = .library
+    @Published var route: Route = .library {didSet {if route != .vocabulary {cancelWordExplanation()}}}
     @Published var papers: [Paper] = []
     @Published var words: [Vocabulary] = []
     @Published var selectedPaperID: String?
@@ -28,6 +28,14 @@ enum Route: String, CaseIterable { case reading = "阅读空间", library="研�
     @Published var listening = false
     @Published var reviewContext = ""
     @Published var lookupSaved = false
+    @Published var expandedWordID:String?
+    @Published var wordExplanations:[String:WordExplanation]=[:]
+    @Published var wordExplanationMessage=""
+    @Published var wordExplanationError:String?
+    @Published var explainingWordID:String?
+    var wordExplanationTask:Task<Void,Never>?
+    var wordExplanationRequest=UUID()
+    var wordExplanationManuallyPaused=false
     @Published var records:[String:PaperRecord]=[:]
     @Published var digests:[String:PaperDigest]=[:]
     @Published var researchNotes:[PaperNote]=[]
@@ -56,7 +64,8 @@ enum Route: String, CaseIterable { case reading = "阅读空间", library="研�
     var hasUnsavedResearchEdits=false
     var shuttingDown=false
     var allowEngineRestore=true
-    let researchClient=ResearchClient()
+    let researchClient:ResearchClient
+    let translationPort:Int
     let dataURL: URL
     var db: Database?
     private var selectionVersion = UUID()
@@ -72,7 +81,9 @@ enum Route: String, CaseIterable { case reading = "阅读空间", library="研�
     var selectedPaper: Paper? { papers.first { $0.id == selectedPaperID } }
     var dueWords: [Vocabulary] { Scheduler.queue(words, limit: Int.max) }
     var currentCard: Vocabulary? { queue.indices.contains(reviewIndex) ? queue[reviewIndex] : nil }
-    init() {
+    init(researchClient:ResearchClient=ResearchClient(),translationPort:Int=11434) {
+        self.researchClient=researchClient
+        self.translationPort=translationPort
         let env = ProcessInfo.processInfo.environment["PAPERLINGO_DATA_DIR"]
         let configURL=Bundle.main.url(forResource:"runtime",withExtension:"json")
         let config=configURL.flatMap{try? Data(contentsOf:$0)}.flatMap{try? JSONSerialization.jsonObject(with:$0) as? [String:String]}
@@ -85,10 +96,12 @@ enum Route: String, CaseIterable { case reading = "阅读空间", library="研�
             selectedPaperID = UserDefaults.standard.string(forKey: "lastPaperID") ?? papers.first?.id
             if selectedPaper == nil { selectedPaperID = papers.first?.id }
         } catch { self.error = error.localizedDescription }
+        audio.prepareForSpeech = { [weak self] in await self?.yieldWordExplanation() }
     }
     func reload() throws {
         guard let db else { throw AppError.message("数据库未打开，请检查数据目录权限。") }
         papers=try db.papers();words=try db.vocabulary();reviewedToday=try db.reviewsToday()
+        wordExplanations=try db.wordExplanations()
         records=try db.paperRecords();digests=try db.latestDigests();researchNotes=try db.allNotes();textStatuses=try db.textStatuses()
     }
     func open(_ paper: Paper, page: Int? = nil) {
@@ -157,11 +170,12 @@ enum Route: String, CaseIterable { case reading = "阅读空间", library="研�
         guard !translating, !selection.isEmpty else { return }
         guard !researchBusy else {toast="本地大模型正在整理论文；完成或取消后即可翻译。阅读、笔记和关键词检索仍可使用。";return}
         guard selection.count<=4000 else { error="一次最多翻译 4000 字符，请选取一个单词、短语或段落。"; return }
-        translating=true; defer { translating=false }
+        translating=true; defer { translating=false; resumeWordExplanationIfNeeded() }
         let text=selection, token=selectionVersion, paper=selectedPaper, page=selectedPage, surrounding=context
+        await yieldWordExplanation()
         do {
             let model=UserDefaults.standard.string(forKey:"translationModel") ?? "translategemma:4b"
-            let result=try await LocalAPI.translate(text,model:model)
+            let result=try await LocalAPI.translate(text,model:model,port:translationPort)
             let save=TextTools.kind(text) != "句子"
             try db?.record(text:text,translation:result,context:surrounding,paper:paper,page:page,save:save)
             try reload(); Task { await reminders.schedule(words) }
@@ -185,6 +199,7 @@ enum Route: String, CaseIterable { case reading = "阅读空间", library="研�
         catch { self.error=error.localizedDescription }
     }
     func deleteWord(_ word: Vocabulary) {
+        if expandedWordID == word.id {expandedWordID=nil;cancelWordExplanation()}
         do { try db?.deleteWord(word.id); try reload(); Task { await reminders.schedule(words) } } catch { self.error=error.localizedDescription }
     }
     func beginReview(listening: Bool) {
@@ -222,12 +237,13 @@ enum Route: String, CaseIterable { case reading = "阅读空间", library="研�
         guard panel.runModal() == .OK, let url=panel.url else { return }
         do {
             struct Backup: Codable {
-                var version=4;var exported=Date()
+                var version=5;var exported=Date()
                 var papers:[Paper];var vocabulary:[Vocabulary]
                 var records:[PaperRecord];var notes:[PaperNote];var digests:[PaperDigest]
+                var wordExplanations:[WordExplanation]
             }
             let encoder=JSONEncoder(); encoder.outputFormatting=[.prettyPrinted,.sortedKeys]; encoder.dateEncodingStrategy = .iso8601
-            try encoder.encode(Backup(papers:papers,vocabulary:words,records:papers.map{record(for:$0)},notes:researchNotes,digests:Array(digests.values))).write(to:url,options:.atomic)
+            try encoder.encode(Backup(papers:papers,vocabulary:words,records:papers.map{record(for:$0)},notes:researchNotes,digests:Array(digests.values),wordExplanations:words.compactMap{explanation(for:$0)})).write(to:url,options:.atomic)
             toast="词库、论文档案和笔记已导出。PDF 与完整日志仍需备份数据目录。"
         } catch { self.error=error.localizedDescription }
     }
