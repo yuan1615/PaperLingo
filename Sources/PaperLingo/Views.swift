@@ -381,12 +381,20 @@ struct ReviewScreen:View {
     var body:some View {
         VStack(alignment:.leading,spacing:18) {
             HStack(alignment:.top) {
-                ScreenHeading(eyebrow:"TEN MINUTES, EVERY DAY",title:"把今天的不熟悉，留给明天的自己。",subtitle:"按到期、遗忘次数和查阅频率，为你安排这一组练习。")
+                VStack(alignment:.leading,spacing:8) {
+                    Text("今日练习").font(.system(size:25,weight:.medium,design:.serif))
+                    Text("先回想，再揭晓。每天约 10 分钟。").font(.system(size:12)).foregroundStyle(Palette.muted)
+                }
                 Spacer()
                 HStack(spacing:0) {modeButton("认词",icon:"character.book.closed",listening:false);modeButton("听力",icon:"headphones",listening:true)}.padding(4).background(Palette.pale,in:RoundedRectangle(cornerRadius:10))
             }
             if let word=store.currentCard {
-                HStack {Text("\(store.reviewIndex+1) / \(store.queue.count)").font(.system(size:11,weight:.medium,design:.monospaced));ProgressView(value:Double(store.reviewIndex),total:Double(max(1,store.queue.count))).tint(Palette.green);Text("约 10 分钟").font(.system(size:10)).foregroundStyle(Palette.muted)}
+                let hasSourceContext=store.revealed && !store.reviewContext.isEmpty && store.reviewContext != word.text
+                HStack(spacing:16) {
+                    Text("\(store.reviewIndex+1) / \(store.queue.count)").font(.system(size:11,weight:.medium,design:.monospaced)).fixedSize()
+                    ProgressView(value:Double(store.reviewIndex),total:Double(max(1,store.queue.count))).tint(Palette.green)
+                    ReviewAudioControls(audio:store.audio)
+                }
                 ScrollView {
                 VStack(spacing:24) {
                     Text(store.listening ? "LISTEN FIRST. TRUST YOUR EARS." : "PAUSE. RECALL. MAKE IT YOURS.").font(.system(size:9,weight:.medium,design:.monospaced)).tracking(2).foregroundStyle(Palette.muted)
@@ -396,15 +404,23 @@ struct ReviewScreen:View {
                         HStack(spacing:15) {Button {store.audio.speak(word.text)} label:{Label("播放",systemImage:"play.fill")}.buttonStyle(PrimaryButton());Button {store.audio.speak(word.text,slow:true)} label:{Label("慢速再听",systemImage:"tortoise")}.buttonStyle(.bordered)}
                     } else {
                         Text(word.text).font(.system(size:word.kind=="句子" ? 26 : 38,weight:.medium,design:.serif)).multilineTextAlignment(.center).textSelection(.enabled).lineSpacing(7).lineLimit(nil).fixedSize(horizontal:false,vertical:true).accessibilityIdentifier("review.expression")
-                        Button {store.audio.speak(word.text)} label:{Label("听发音",systemImage:"speaker.wave.2")}.font(.system(size:12)).buttonStyle(ReadingButtonStyle()).foregroundStyle(Palette.green)
+                        HStack(spacing:12) {
+                            if word.kind == "句子" && !hasSourceContext {
+                                Button {store.audio.speak(word.text)} label:{Label("朗读原句",systemImage:"speaker.wave.2.fill")}.buttonStyle(PrimaryButton()).accessibilityIdentifier("review.playExpression")
+                            } else {
+                                Button {store.audio.speak(word.text)} label:{Label(word.kind == "句子" ? "选句发音" : "词条发音",systemImage:"speaker.wave.2")}.buttonStyle(.bordered).controlSize(.large).accessibilityIdentifier("review.playExpression")
+                            }
+                            if hasSourceContext {
+                                Button {store.audio.speak(store.reviewContext)} label:{Label("朗读原句",systemImage:"speaker.wave.2.fill")}.buttonStyle(PrimaryButton()).accessibilityIdentifier("review.playContext")
+                            }
+                        }
                     }
                     if store.revealed {
                         Divider().padding(.horizontal,50)
                         Text(word.translation).font(.system(size:19)).multilineTextAlignment(.center).lineSpacing(7).textSelection(.enabled).lineLimit(nil).fixedSize(horizontal:false,vertical:true)
                         if !store.reviewContext.isEmpty && store.reviewContext != word.text {
-                            Text("论文原句").font(.system(size:10,weight:.medium)).foregroundStyle(Palette.muted)
+                            Label("论文原句",systemImage:"doc.text").font(.system(size:12,weight:.medium)).foregroundStyle(Palette.muted)
                             Text(store.reviewContext).font(.system(size:13,design:.serif)).foregroundStyle(Palette.muted).multilineTextAlignment(.center).lineSpacing(6).lineLimit(nil).fixedSize(horizontal:false,vertical:true).textSelection(.enabled).accessibilityIdentifier("review.context")
-                            Button("听论文原句"){store.audio.speak(store.reviewContext)}.buttonStyle(ReadingButtonStyle()).font(.system(size:11)).foregroundStyle(Palette.green)
                         }
                         Text("来自 \(word.paperTitle) · 查阅 \(word.lookups) 次").font(.system(size:10)).foregroundStyle(Palette.muted).lineLimit(1)
                     } else {
@@ -416,7 +432,7 @@ struct ReviewScreen:View {
                     HStack(spacing:12) {
                         ForEach(Grade.allCases,id:\.rawValue) {grade in
                             let next=Scheduler.next(stage:word.stage,grade:grade,now:Date())
-                            Button {store.grade(grade)} label:{VStack(spacing:7){Text(grade.title).font(.system(size:13,weight:.semibold));Text(interval(next.due)).font(.system(size:10)).foregroundStyle(Palette.muted)}.frame(maxWidth:.infinity).padding(.vertical,15).background(grade == .good ? Palette.pale : .white,in:RoundedRectangle(cornerRadius:10)).overlay(RoundedRectangle(cornerRadius:10).stroke(Palette.line,lineWidth:1))}.buttonStyle(ReadingButtonStyle())
+                            Button {store.grade(grade)} label:{VStack(spacing:7){Text(grade.title).font(.system(size:13,weight:.semibold));Text(interval(next.due)).font(.system(size:10)).foregroundStyle(Palette.muted)}.frame(maxWidth:.infinity).padding(.vertical,15).background(grade == .good ? Palette.pale : .white,in:RoundedRectangle(cornerRadius:10)).overlay(RoundedRectangle(cornerRadius:10).stroke(Palette.line,lineWidth:1))}.buttonStyle(ReadingButtonStyle()).accessibilityIdentifier("review.grade.\(grade.rawValue)")
                         }
                     }
                 } else {
@@ -429,14 +445,53 @@ struct ReviewScreen:View {
                 Spacer()
             }
             HStack {Image(systemName:"clock");Text(String(format:"每天 %02d:%02d · 北京时间 · 可在设置中调整",UserDefaults.standard.object(forKey:"reminderHour") as? Int ?? 20,UserDefaults.standard.object(forKey:"reminderMinute") as? Int ?? 30));Spacer();Text("今天已练习 \(store.reviewedToday) 项")}.font(.system(size:10)).foregroundStyle(Palette.muted)
-        }.padding(32)
-            .safeAreaInset(edge:.bottom,spacing:0) {
-                AudioBar(audio:store.audio,initiallyCollapsed:true).frame(maxWidth:.infinity,alignment:.trailing).padding(.horizontal,32).padding(.bottom,8)
-            }
-            .onDisappear{store.audio.stop();store.stopReviewContext()}
+        }.padding(32).onDisappear{store.audio.stop();store.stopReviewContext()}
     }
     func modeButton(_ title:String,icon:String,listening:Bool) -> some View {Button {store.beginReview(listening:listening)} label:{Label(title,systemImage:icon).font(.system(size:12,weight:.medium)).padding(.horizontal,15).padding(.vertical,9).background(store.listening==listening ? .white : .clear,in:RoundedRectangle(cornerRadius:7))}.buttonStyle(ReadingButtonStyle())}
     func interval(_ date:Date)->String {let seconds=date.timeIntervalSinceNow;if seconds<3600{return "10 分钟后"};return "\(Int((seconds/86400).rounded())) 天后"}
+}
+
+struct ReviewAudioControls:View {
+    @ObservedObject var audio:AudioService
+    @State private var showingDetails=false
+    private var active:Bool {audio.busy || audio.playing || audio.error != nil}
+    private var status:String {
+        if audio.error != nil {return "朗读遇到问题"}
+        if audio.paused {return "已暂停"}
+        if audio.busy {return audio.currentPart == 0 ? "正在生成首句…" : "正在接续下一句…"}
+        if audio.playing {return audio.totalParts > 0 ? "正在朗读 \(audio.currentPart)/\(audio.totalParts) 段" : "正在朗读"}
+        return "点击发音开始听"
+    }
+    var body:some View {
+        HStack(spacing:4) {
+            ZStack {
+                if audio.busy {ProgressView().controlSize(.small)}
+                else {Image(systemName:audio.error != nil ? "exclamationmark.circle" : "speaker.wave.2").foregroundStyle(audio.error != nil ? Palette.orange : Palette.green)}
+            }.frame(width:20,height:20)
+            Text(status).font(.system(size:11,weight:.medium)).foregroundStyle(active ? Palette.ink : Palette.muted).lineLimit(1).frame(maxWidth:.infinity,alignment:.leading)
+            Button {showingDetails.toggle()} label:{Image(systemName:"info.circle").frame(width:28,height:28)}
+                .disabled(!active).opacity(active ? 1 : 0.35).help("查看朗读详情").accessibilityLabel("查看朗读详情").accessibilityIdentifier("review.audio.details")
+                .popover(isPresented:$showingDetails,arrowEdge:.bottom) {
+                    ScrollView {
+                        VStack(alignment:.leading,spacing:10) {
+                            Text(status).font(.system(size:13,weight:.semibold))
+                            if let error=audio.error {Text(error).foregroundStyle(Palette.orange)}
+                            else {
+                                Text(audio.label).foregroundStyle(Palette.muted)
+                                if audio.totalParts > 0 {Text("已生成 \(audio.generatedParts)/\(audio.totalParts) 段").foregroundStyle(Palette.muted)}
+                                if !audio.currentText.isEmpty {Text(audio.currentText).textSelection(.enabled).lineSpacing(5)}
+                            }
+                        }.font(.system(size:12)).padding(18).frame(maxWidth:.infinity,alignment:.leading)
+                    }.frame(width:320,height:220)
+                }
+            Button {audio.togglePause()} label:{Image(systemName:audio.paused ? "play.fill" : "pause.fill").frame(width:28,height:28)}
+                .disabled(!audio.busy && !audio.playing).opacity(audio.busy || audio.playing ? 1 : 0.35).help(audio.paused ? "继续朗读" : "暂停朗读").accessibilityLabel(audio.paused ? "继续朗读" : "暂停朗读").accessibilityIdentifier("review.audio.pause")
+            Button {audio.stop()} label:{Image(systemName:"stop.fill").frame(width:28,height:28)}
+                .disabled(!active).opacity(active ? 1 : 0.35).help("停止朗读 ⌘.").accessibilityLabel("停止朗读").accessibilityIdentifier("review.audio.stop")
+        }.buttonStyle(ReadingButtonStyle()).padding(.horizontal,8).frame(width:280,height:36)
+            .background(Palette.pale.opacity(0.7),in:RoundedRectangle(cornerRadius:9)).accessibilityIdentifier("review.audio")
+            .onChange(of:active) {_,value in if !value {showingDetails=false}}
+    }
 }
 
 struct SettingsScreen:View {

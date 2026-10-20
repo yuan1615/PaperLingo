@@ -2,6 +2,16 @@
 
 Notable changes are recorded here. Version numbers follow `MAJOR.MINOR.PATCH`; v0.x releases may change behavior and data formats.
 
+## [0.2.5] - 2026-10-20
+
+### Fixed
+
+- Keep review playback controls in a fixed-size progress row. Generating, playing, pausing, errors and stopping no longer insert bottom space, resize the card or move its scroll position and grading controls.
+- Put a prominent green source-sentence speech button beside word pronunciation, before the long context. Saved sentence cards use the same explicit playback label.
+- Shorten the review heading to leave more room for the card in small windows. Playback details and full error messages open only when requested.
+
+Validation: 32 core checks, Release build and 34 isolated native review UI checks passed. UI checks compare scroll geometry and grading-region pixels at 860 × 620, 1100 × 800 and 1440 × 900, exercise speech controls with native mouse events and system speech, and inject synthesis states without model inference. Database schema and models are unchanged. The separately distributed full offline DMG remains v0.2.3.
+
 ## [0.2.4] - 2026-10-20
 
 ### Fixed
@@ -120,6 +130,7 @@ Validation scope and limitations are documented in [v0.2.1 verification](docs/VE
 - Model accuracy and gap-free speech playback are not guaranteed.
 - Offline app builds use ad-hoc signing by default and are not Apple-notarized.
 
+[0.2.5]: https://github.com/yuan1615/PaperLingo/releases/tag/v0.2.5
 [0.2.4]: https://github.com/yuan1615/PaperLingo/releases/tag/v0.2.4
 [0.2.3]: https://github.com/yuan1615/PaperLingo/releases/tag/v0.2.3
 [0.1.0]: https://github.com/yuan1615/PaperLingo/releases/tag/v0.1.0
