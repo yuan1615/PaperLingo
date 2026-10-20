@@ -2,6 +2,15 @@
 
 Notable changes are recorded here. Version numbers follow `MAJOR.MINOR.PATCH`; v0.x releases may change behavior and data formats.
 
+## [0.2.6] - 2026-10-20
+
+### Added
+
+- Highlight the current review word or phrase in its paper context with a pale yellow background and semibold text. Match repeated occurrences without case sensitivity, allow whitespace between phrase terms, and avoid matching inside a longer word.
+- Preserve the full selectable source text, original spelling, speech input and existing review layout.
+
+Validation: Release build and the existing 34 native review UI checks passed. Inspected isolated word, phrase and literal-term previews, including uppercase/repeated matches and longer-word exclusions. No database or model changes.
+
 ## [0.2.5] - 2026-10-20
 
 ### Fixed
@@ -130,6 +139,7 @@ Validation scope and limitations are documented in [v0.2.1 verification](docs/VE
 - Model accuracy and gap-free speech playback are not guaranteed.
 - Offline app builds use ad-hoc signing by default and are not Apple-notarized.
 
+[0.2.6]: https://github.com/yuan1615/PaperLingo/releases/tag/v0.2.6
 [0.2.5]: https://github.com/yuan1615/PaperLingo/releases/tag/v0.2.5
 [0.2.4]: https://github.com/yuan1615/PaperLingo/releases/tag/v0.2.4
 [0.2.3]: https://github.com/yuan1615/PaperLingo/releases/tag/v0.2.3

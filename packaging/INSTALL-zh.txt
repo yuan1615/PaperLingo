@@ -1,4 +1,4 @@
-PaperLingo v0.2.5 — 完整离线版（Apple Silicon）
+PaperLingo v0.2.6 — 完整离线版（Apple Silicon）
 
 适用电脑
 • Apple M 系列芯片，macOS 14 或以上。
@@ -9,7 +9,7 @@ PaperLingo v0.2.5 — 完整离线版（Apple Silicon）
   无需安装 Xcode、Homebrew、Python 或单独下载模型。不适用于 Intel Mac。
 
 安装步骤
-1. 将整个 PaperLingo-0.2.5-macOS-arm64-offline.dmg 复制到新 Mac。
+1. 将整个 PaperLingo-0.2.6-macOS-arm64-offline.dmg 复制到新 Mac。
 2. 双击打开 DMG，把 PaperLingo.app 拖入旁边的 Applications（应用程序）。
    也可以复制到当前用户的 ~/Applications 目录；需要先完整复制，再启动。
 3. 复制完成后推出磁盘镜像，从“应用程序”打开 PaperLingo。
@@ -17,7 +17,8 @@ PaperLingo v0.2.5 — 完整离线版（Apple Silicon）
 4. 可断网使用本地 PDF、翻译、发音、笔记、整理和检索；导入网页链接仍需联网。
 5. 每日提醒默认为北京时间 20:30；请在新 Mac 的设置页重新允许通知。
 
-v0.2.5 功能
+v0.2.6 功能
+• 今日练习在论文原句中高亮当前单词或短语，忽略大小写并标记重复出现处。
 • 今日练习的播放控制固定在进度栏，发音不挤压卡片，词条发音旁提供绿色原句朗读按钮。
 • 研究库默认展示中文摘要，筛选、排序和次要操作按需展开。
 • PDF / 网页选区旁提供翻译、朗读与笔记操作，译文在原位显示。
@@ -67,7 +68,7 @@ Qwen3.6、Qwen3 Embedding 和 Qwen3 Reranker 使用 Apache-2.0。
 
 完整性
 镜像旁的 .sha256 文件记录 DMG 的 SHA-256。可在终端运行：
-shasum -a 256 -c PaperLingo-0.2.5-macOS-arm64-offline.dmg.sha256
+shasum -a 256 -c PaperLingo-0.2.6-macOS-arm64-offline.dmg.sha256
 
 传输建议
 镜像超过 4 GB，U 盘或移动硬盘请使用 APFS 或 exFAT；FAT32 无法保存。

@@ -420,7 +420,7 @@ struct ReviewScreen:View {
                         Text(word.translation).font(.system(size:19)).multilineTextAlignment(.center).lineSpacing(7).textSelection(.enabled).lineLimit(nil).fixedSize(horizontal:false,vertical:true)
                         if !store.reviewContext.isEmpty && store.reviewContext != word.text {
                             Label("论文原句",systemImage:"doc.text").font(.system(size:12,weight:.medium)).foregroundStyle(Palette.muted)
-                            Text(store.reviewContext).font(.system(size:13,design:.serif)).foregroundStyle(Palette.muted).multilineTextAlignment(.center).lineSpacing(6).lineLimit(nil).fixedSize(horizontal:false,vertical:true).textSelection(.enabled).accessibilityIdentifier("review.context")
+                            ReviewContextText(context:store.reviewContext,expression:word.text).multilineTextAlignment(.center).lineSpacing(6).lineLimit(nil).fixedSize(horizontal:false,vertical:true).textSelection(.enabled).accessibilityIdentifier("review.context")
                         }
                         Text("来自 \(word.paperTitle) · 查阅 \(word.lookups) 次").font(.system(size:10)).foregroundStyle(Palette.muted).lineLimit(1)
                     } else {
@@ -449,6 +449,30 @@ struct ReviewScreen:View {
     }
     func modeButton(_ title:String,icon:String,listening:Bool) -> some View {Button {store.beginReview(listening:listening)} label:{Label(title,systemImage:icon).font(.system(size:12,weight:.medium)).padding(.horizontal,15).padding(.vertical,9).background(store.listening==listening ? .white : .clear,in:RoundedRectangle(cornerRadius:7))}.buttonStyle(ReadingButtonStyle())}
     func interval(_ date:Date)->String {let seconds=date.timeIntervalSinceNow;if seconds<3600{return "10 分钟后"};return "\(Int((seconds/86400).rounded())) 天后"}
+}
+
+struct ReviewContextText:View {
+    let context:String
+    let expression:String
+    var body:some View {Text(highlighted).font(.system(size:13,design:.serif))}
+    private var highlighted:AttributedString {
+        var result=AttributedString(context)
+        result.foregroundColor=Palette.muted
+        let terms=expression.split(whereSeparator:{$0.isWhitespace})
+        guard !terms.isEmpty else {return result}
+        let literal=terms.map{NSRegularExpression.escapedPattern(for:String($0))}.joined(separator:"\\s+")
+        // Match complete terms, including repeated/capitalized occurrences, without
+        // marking a short word inside a different word (e.g. "learn" in "learning").
+        let boundary="[\\p{L}\\p{M}\\p{N}_]"
+        guard let pattern=try? NSRegularExpression(pattern:"(?<!\(boundary))\(literal)(?!\(boundary))",options:.caseInsensitive) else {return result}
+        for match in pattern.matches(in:context,range:NSRange(context.startIndex...,in:context)) {
+            guard let sourceRange=Range(match.range,in:context),let range=Range(sourceRange,in:result) else {continue}
+            result[range].foregroundColor=Palette.ink
+            result[range].backgroundColor=Color(red:0.98,green:0.88,blue:0.54).opacity(0.65)
+            result[range].font = .system(size:13,weight:.semibold,design:.serif)
+        }
+        return result
+    }
 }
 
 struct ReviewAudioControls:View {
