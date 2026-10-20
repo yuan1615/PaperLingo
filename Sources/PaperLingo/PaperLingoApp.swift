@@ -20,6 +20,7 @@ final class AppDelegate:NSObject,NSApplicationDelegate,UNUserNotificationCenterD
         // Signal the owned engines synchronously before the app exits.
         store?.shuttingDown=true
         store?.researchTask?.cancel();store?.searchTask?.cancel()
+        store?.stopReviewContext()
         store?.audio.stop()
         store?.engines.stop()
     }

@@ -26,6 +26,7 @@ enum Route: String, CaseIterable { case reading = "阅读空间", library="研�
     @Published var reviewIndex = 0
     @Published var revealed = false
     @Published var listening = false
+    @Published var reviewContext = ""
     @Published var lookupSaved = false
     @Published var records:[String:PaperRecord]=[:]
     @Published var digests:[String:PaperDigest]=[:]
@@ -63,6 +64,7 @@ enum Route: String, CaseIterable { case reading = "阅读空间", library="研�
     private var translatedPage = 0
     private var translatedContext = ""
     private var translatedText = ""
+    private var reviewContextTask: Task<Void, Never>?
     let engines = EngineManager()
     let audio = AudioService()
     let layout = ReaderLayout()
@@ -187,10 +189,32 @@ enum Route: String, CaseIterable { case reading = "阅读空间", library="研�
     }
     func beginReview(listening: Bool) {
         audio.stop(); self.listening=listening; queue=Scheduler.queue(words); reviewIndex=0; revealed=false
+        loadReviewContext()
+    }
+    func stopReviewContext() { reviewContextTask?.cancel(); reviewContextTask=nil }
+    private func loadReviewContext() {
+        stopReviewContext()
+        guard let word = currentCard else { reviewContext=""; return }
+        reviewContext = word.context
+        guard let paper = papers.first(where: { $0.id == word.paperID }) else { return }
+        let url = fileURL(paper), id = word.id
+        reviewContextTask = Task { [weak self] in
+            // Recover legacy clipped contexts from this card's saved page only.
+            // This is a display repair; it never rewrites lookup/review history.
+            let recovered = await Task.detached(priority: .userInitiated) {
+                let source: String?
+                if paper.kind == "PDF" { source = PDFDocument(url: url)?.page(at: word.page)?.string }
+                else { source = try? String(contentsOf: url, encoding: .utf8) }
+                guard !Task.isCancelled, let source, !source.isEmpty else { return word.context }
+                return TextTools.context(in: source, selection: word.text, matching: word.context)
+            }.value
+            guard !Task.isCancelled, let self, self.currentCard?.id == id, self.route == .review else { return }
+            self.reviewContext = recovered
+        }
     }
     func grade(_ grade: Grade) {
         guard revealed, let word=currentCard else { return }
-        do { try db?.review(word,grade:grade,mode:listening ? "listening" : "recognition"); try reload(); audio.stop(); reviewIndex+=1; revealed=false; Task { await reminders.schedule(words) } }
+        do { try db?.review(word,grade:grade,mode:listening ? "listening" : "recognition"); try reload(); audio.stop(); reviewIndex+=1; revealed=false; loadReviewContext(); Task { await reminders.schedule(words) } }
         catch { self.error=error.localizedDescription }
     }
     func exportBackup() {

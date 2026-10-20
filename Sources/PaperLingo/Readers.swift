@@ -108,7 +108,9 @@ struct TextReader: NSViewRepresentable {
         view.textContainer?.widthTracksTextView=true; view.textContainer?.lineFragmentPadding=0
         view.delegate=context.coordinator; scroll.documentView=view
         context.coordinator.view=view; update(view,coordinator:context.coordinator)
-        context.coordinator.selectionPopover.attach(to: view)
+        // Anchor to the viewport, not the scrolling text document. The result
+        // stays on screen while the reader continues through the article.
+        context.coordinator.selectionPopover.attach(to: scroll)
         context.coordinator.selectionPopover.selectionSettled = { [weak coordinator = context.coordinator] in coordinator?.updateSelection() }
         return scroll
     }
@@ -168,7 +170,9 @@ struct TextReader: NSViewRepresentable {
                     _ = manager.lineFragmentUsedRect(forGlyphAt: glyphs.location + glyphs.length - 1, effectiveRange: &lastLine)
                     let rect = manager.boundingRect(forGlyphRange: NSIntersectionRange(glyphs, lastLine), in: container)
                         .offsetBy(dx: view.textContainerOrigin.x, dy: view.textContainerOrigin.y)
-                    self.selectionPopover.show(anchoredTo: rect)
+                    if let viewport = view.enclosingScrollView {
+                        self.selectionPopover.show(anchoredTo: viewport.convert(rect, from: view))
+                    }
                 }
             }
         }

@@ -37,6 +37,37 @@ final class PaperCoreTests {
         let emoji="First sentence. The 🧠 model learns."
         XCTAssertEqual(TextTools.context(in:emoji,range:(emoji as NSString).range(of:"🧠")),"The 🧠 model learns.")
     }
+    func testLongSentenceContextIsCompleteAtEverySelection() {
+        let sentence="The 🧠 researchers " + String(repeating:"carefully compare the multilingual representation with its surrounding evidence, ",count:40) + "and establish a verifiable conclusion."
+        let text="Previous sentence. " + sentence + " Another sentence."
+        for selected in ["researchers","surrounding evidence","verifiable"] {
+            XCTAssertEqual(TextTools.context(in:text,selection:selected),sentence)
+            XCTAssertEqual(TextTools.context(in:text,range:(text as NSString).range(of:selected)),sentence)
+        }
+        let selected=String(sentence.dropFirst(40).prefix(2200))
+        XCTAssertEqual(TextTools.context(in:text,range:(text as NSString).range(of:selected)),sentence)
+        XCTAssertEqual(TextTools.context(in:sentence,range:(sentence as NSString).range(of:"researchers")),sentence)
+    }
+    func testLegacyContextFindsTheMatchingOccurrence() {
+        let sentence="The subsequent study " + String(repeating:"retains the surrounding scientific conditions, ",count:24) + "uses a robust diagnostic sentinel " + String(repeating:"and keeps every qualification intact, ",count:24) + "before reaching its final conclusion."
+        let text="An earlier robust estimate is unrelated. " + sentence + " Another robust example follows."
+        let source=sentence as NSString
+        let word=source.range(of:"robust")
+        let old=source.substring(with:NSRange(location:word.location-350,length:word.length+700))
+        XCTAssertEqual(TextTools.context(in:text,selection:"robust",matching:old),sentence)
+        XCTAssertEqual(TextTools.context(in:text,selection:"robust",matching:"unavailable robust context"),"unavailable robust context")
+        XCTAssertEqual(TextTools.context(in:"Source unavailable.",selection:"robust",matching:old),old)
+    }
+    func testCompleteContextSurvivesVocabularyPersistence() throws {
+        let (db,dir)=try database();defer{try? FileManager.default.removeItem(at:dir)}
+        let sentence="The robust learner " + String(repeating:"preserves the complete experimental condition, ",count:45) + "including the final source qualifier."
+        let context=TextTools.context(in:"Prior sentence. "+sentence+" Next sentence.",selection:"robust")
+        try db.record(text:"robust",translation:"稳健的",context:context,paper:nil,page:0)
+        XCTAssertEqual(try db.vocabulary().first?.context,sentence)
+        try db.promote(text:sentence,translation:"完整句子",context:context,paper:nil,page:0)
+        XCTAssertEqual(try db.vocabulary().first(where:{$0.kind=="句子"})?.text,sentence)
+        XCTAssertEqual(try db.vocabulary().first(where:{$0.kind=="句子"})?.context,sentence)
+    }
     func testBundledRuntimeRelocationAndWritableStore() throws {
         let root=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer {try? FileManager.default.removeItem(at:root)}
@@ -285,6 +316,9 @@ let checks:[(String,() throws -> Void)] = [
     ("Retired experiment data migration",summarySuite.testMigrationRemovesRetiredCaches),
     ("PDF normalization",suite.testPDFNormalizationAndClassification),
     ("Selection context locality and Unicode",suite.testContextUsesActualOccurrenceAndBoundedWindow),
+    ("Complete long sentences at all selection positions",suite.testLongSentenceContextIsCompleteAtEverySelection),
+    ("Legacy fragments match the correct source occurrence",suite.testLegacyContextFindsTheMatchingOccurrence),
+    ("Complete sentence vocabulary persistence",suite.testCompleteContextSurvivesVocabularyPersistence),
     ("Bundled runtime relocation and writable metadata",suite.testBundledRuntimeRelocationAndWritableStore),
     ("Development runtime compatibility",suite.testDevelopmentRuntimePathsRemainCompatible),
     ("Lookup deduplication and frequency",suite.testRepeatedLookupHasOneCardAndRealFrequency),

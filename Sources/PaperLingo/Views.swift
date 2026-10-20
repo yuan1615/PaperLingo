@@ -55,7 +55,7 @@ struct RootView:View {
         }
         .overlay(alignment:.bottomTrailing) {
             if store.researchBusy && store.route != .library {ResearchCompactStatus(store:store,audio:store.audio).padding(18)}
-            else {AudioBar(audio:store.audio).padding(18)}
+            else if store.route != .review {AudioBar(audio:store.audio).padding(18)}
         }
         .onExitCommand { if layout.focused {layout.focused=false} }
         .foregroundStyle(Palette.ink).tint(Palette.green)
@@ -270,7 +270,6 @@ struct DocumentPanel:View {
 
 struct LearningPanel:View {
     @ObservedObject var store:AppStore
-    @State private var expandedSelection=false
     @State private var manualText=""
     var body:some View {
         ScrollView {
@@ -288,8 +287,7 @@ struct LearningPanel:View {
                 } else {
                     VStack(alignment:.leading,spacing:12) {
                         HStack { Text(TextTools.kind(store.selection)).font(.system(size:9,weight:.medium)).foregroundStyle(Palette.green).padding(.horizontal,8).padding(.vertical,4).background(Palette.pale,in:Capsule()); Spacer(); Button {store.clearSelection()} label:{Image(systemName:"xmark").font(.system(size:10))}.buttonStyle(ReadingButtonStyle()).foregroundStyle(Palette.muted) }
-                        Text(store.selection).font(.system(size:store.selection.count > 120 ? 16 : 22,weight:.medium,design:.serif)).textSelection(.enabled).lineSpacing(5).lineLimit(expandedSelection ? nil : 8).fixedSize(horizontal:false,vertical:true)
-                        if store.selection.count > 160 {Button(expandedSelection ? "收起选区" : "展开完整选区") {expandedSelection.toggle()}.buttonStyle(ReadingButtonStyle()).font(.system(size:10)).foregroundStyle(Palette.green)}
+                        Text(store.selection).font(.system(size:store.selection.count > 120 ? 16 : 22,weight:.medium,design:.serif)).textSelection(.enabled).lineSpacing(5).lineLimit(nil).fixedSize(horizontal:false,vertical:true)
                         HStack(spacing:14) {
                             Button {store.audio.speak(store.selection)} label:{Label("发音",systemImage:"speaker.wave.2")}
                             Button {store.audio.speak(store.selection,slow:true)} label:{Label("慢速",systemImage:"tortoise")}
@@ -320,7 +318,7 @@ struct LearningPanel:View {
                     Button {store.route = .review;store.beginReview(listening:false)} label:{HStack {Text("今日待复习");Spacer();Text("\(store.dueWords.count) 项 →")}}.buttonStyle(ReadingButtonStyle()).font(.system(size:11)).foregroundStyle(Palette.green).padding(.top,5)
                 }
             }.padding(23)
-        }.background(Color.white.opacity(0.52)).onChange(of:store.selection) {_,_ in expandedSelection=false}
+        }.background(Color.white.opacity(0.52))
     }
 }
 
@@ -381,7 +379,7 @@ struct WordRow:View {
 struct ReviewScreen:View {
     @ObservedObject var store:AppStore
     var body:some View {
-        VStack(alignment:.leading,spacing:24) {
+        VStack(alignment:.leading,spacing:18) {
             HStack(alignment:.top) {
                 ScreenHeading(eyebrow:"TEN MINUTES, EVERY DAY",title:"把今天的不熟悉，留给明天的自己。",subtitle:"按到期、遗忘次数和查阅频率，为你安排这一组练习。")
                 Spacer()
@@ -389,7 +387,7 @@ struct ReviewScreen:View {
             }
             if let word=store.currentCard {
                 HStack {Text("\(store.reviewIndex+1) / \(store.queue.count)").font(.system(size:11,weight:.medium,design:.monospaced));ProgressView(value:Double(store.reviewIndex),total:Double(max(1,store.queue.count))).tint(Palette.green);Text("约 10 分钟").font(.system(size:10)).foregroundStyle(Palette.muted)}
-                Spacer(minLength:0)
+                ScrollView {
                 VStack(spacing:24) {
                     Text(store.listening ? "LISTEN FIRST. TRUST YOUR EARS." : "PAUSE. RECALL. MAKE IT YOURS.").font(.system(size:9,weight:.medium,design:.monospaced)).tracking(2).foregroundStyle(Palette.muted)
                     if store.listening && !store.revealed {
@@ -397,19 +395,23 @@ struct ReviewScreen:View {
                         Text("先听一听，你能认出来吗？").font(.system(size:19,design:.serif))
                         HStack(spacing:15) {Button {store.audio.speak(word.text)} label:{Label("播放",systemImage:"play.fill")}.buttonStyle(PrimaryButton());Button {store.audio.speak(word.text,slow:true)} label:{Label("慢速再听",systemImage:"tortoise")}.buttonStyle(.bordered)}
                     } else {
-                        Text(word.text).font(.system(size:word.kind=="句子" ? 26 : 38,weight:.medium,design:.serif)).multilineTextAlignment(.center).textSelection(.enabled).lineSpacing(7)
+                        Text(word.text).font(.system(size:word.kind=="句子" ? 26 : 38,weight:.medium,design:.serif)).multilineTextAlignment(.center).textSelection(.enabled).lineSpacing(7).lineLimit(nil).fixedSize(horizontal:false,vertical:true).accessibilityIdentifier("review.expression")
                         Button {store.audio.speak(word.text)} label:{Label("听发音",systemImage:"speaker.wave.2")}.font(.system(size:12)).buttonStyle(ReadingButtonStyle()).foregroundStyle(Palette.green)
                     }
                     if store.revealed {
                         Divider().padding(.horizontal,50)
-                        Text(word.translation).font(.system(size:19)).multilineTextAlignment(.center).lineSpacing(7).textSelection(.enabled)
-                        if !word.context.isEmpty && word.context != word.text {Text(word.context).font(.system(size:13,design:.serif)).foregroundStyle(Palette.muted).multilineTextAlignment(.center).lineSpacing(6).lineLimit(5);Button("听论文原句"){store.audio.speak(word.context)}.buttonStyle(ReadingButtonStyle()).font(.system(size:11)).foregroundStyle(Palette.green)}
+                        Text(word.translation).font(.system(size:19)).multilineTextAlignment(.center).lineSpacing(7).textSelection(.enabled).lineLimit(nil).fixedSize(horizontal:false,vertical:true)
+                        if !store.reviewContext.isEmpty && store.reviewContext != word.text {
+                            Text("论文原句").font(.system(size:10,weight:.medium)).foregroundStyle(Palette.muted)
+                            Text(store.reviewContext).font(.system(size:13,design:.serif)).foregroundStyle(Palette.muted).multilineTextAlignment(.center).lineSpacing(6).lineLimit(nil).fixedSize(horizontal:false,vertical:true).textSelection(.enabled).accessibilityIdentifier("review.context")
+                            Button("听论文原句"){store.audio.speak(store.reviewContext)}.buttonStyle(ReadingButtonStyle()).font(.system(size:11)).foregroundStyle(Palette.green)
+                        }
                         Text("来自 \(word.paperTitle) · 查阅 \(word.lookups) 次").font(.system(size:10)).foregroundStyle(Palette.muted).lineLimit(1)
                     } else {
                         Text(store.listening ? "原文和译文暂时隐藏，先试着辨认声音。" : "想一想它的含义，再揭晓答案。").font(.system(size:12)).foregroundStyle(Palette.muted).padding(.top,10)
-                        Button {store.revealed=true} label:{Text("揭晓答案").frame(width:160)}.buttonStyle(PrimaryButton()).keyboardShortcut(.space,modifiers:[])
                     }
-                }.padding(40).frame(maxWidth:800).frame(minHeight:390).frame(maxWidth:.infinity).background(.white.opacity(0.75),in:RoundedRectangle(cornerRadius:18)).overlay(RoundedRectangle(cornerRadius:18).stroke(Palette.line,lineWidth:1))
+                }.padding(28).frame(maxWidth:800).frame(maxWidth:.infinity)
+                }.frame(maxWidth:.infinity,maxHeight:.infinity).background(.white.opacity(0.75),in:RoundedRectangle(cornerRadius:18)).overlay(RoundedRectangle(cornerRadius:18).stroke(Palette.line,lineWidth:1)).id("\(word.id)-\(store.listening)").accessibilityIdentifier("review.card")
                 if store.revealed {
                     HStack(spacing:12) {
                         ForEach(Grade.allCases,id:\.rawValue) {grade in
@@ -417,8 +419,9 @@ struct ReviewScreen:View {
                             Button {store.grade(grade)} label:{VStack(spacing:7){Text(grade.title).font(.system(size:13,weight:.semibold));Text(interval(next.due)).font(.system(size:10)).foregroundStyle(Palette.muted)}.frame(maxWidth:.infinity).padding(.vertical,15).background(grade == .good ? Palette.pale : .white,in:RoundedRectangle(cornerRadius:10)).overlay(RoundedRectangle(cornerRadius:10).stroke(Palette.line,lineWidth:1))}.buttonStyle(ReadingButtonStyle())
                         }
                     }
+                } else {
+                    HStack { Spacer(); Button {store.revealed=true} label:{Text("揭晓答案").frame(width:160)}.buttonStyle(PrimaryButton()).keyboardShortcut(.space,modifiers:[]); Spacer() }
                 }
-                Spacer(minLength:0)
             } else {
                 Spacer()
                 EmptyContent(icon:store.queue.isEmpty ? "sun.horizon" : "checkmark.seal",title:store.queue.isEmpty ? "今天的复习队列是空的" : "这一组，已经记在心里。",detail:store.queue.isEmpty ? "去读一篇论文，查阅的表达会在这里等你。" : "已完成 \(store.queue.count) 项练习，新的间隔已经安排好。")
@@ -426,7 +429,11 @@ struct ReviewScreen:View {
                 Spacer()
             }
             HStack {Image(systemName:"clock");Text(String(format:"每天 %02d:%02d · 北京时间 · 可在设置中调整",UserDefaults.standard.object(forKey:"reminderHour") as? Int ?? 20,UserDefaults.standard.object(forKey:"reminderMinute") as? Int ?? 30));Spacer();Text("今天已练习 \(store.reviewedToday) 项")}.font(.system(size:10)).foregroundStyle(Palette.muted)
-        }.padding(32).onDisappear{store.audio.stop()}
+        }.padding(32)
+            .safeAreaInset(edge:.bottom,spacing:0) {
+                AudioBar(audio:store.audio,initiallyCollapsed:true).frame(maxWidth:.infinity,alignment:.trailing).padding(.horizontal,32).padding(.bottom,8)
+            }
+            .onDisappear{store.audio.stop();store.stopReviewContext()}
     }
     func modeButton(_ title:String,icon:String,listening:Bool) -> some View {Button {store.beginReview(listening:listening)} label:{Label(title,systemImage:icon).font(.system(size:12,weight:.medium)).padding(.horizontal,15).padding(.vertical,9).background(store.listening==listening ? .white : .clear,in:RoundedRectangle(cornerRadius:7))}.buttonStyle(ReadingButtonStyle())}
     func interval(_ date:Date)->String {let seconds=date.timeIntervalSinceNow;if seconds<3600{return "10 分钟后"};return "\(Int((seconds/86400).rounded())) 天后"}
@@ -524,7 +531,10 @@ struct LinkImport:View {
 
 struct AudioBar:View {
     @ObservedObject var audio:AudioService
-    @State private var collapsed=false
+    @State private var collapsed:Bool
+    init(audio:AudioService,initiallyCollapsed:Bool=false) {
+        self.audio=audio;_collapsed=State(initialValue:initiallyCollapsed)
+    }
     var body:some View {
         if audio.busy || audio.playing || audio.error != nil {
             VStack(alignment:.leading,spacing:8) {

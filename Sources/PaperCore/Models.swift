@@ -1,4 +1,5 @@
 import Foundation
+import NaturalLanguage
 
 public enum TextTools {
     public static func clean(_ text: String) -> String {
@@ -15,35 +16,59 @@ public enum TextTools {
         if words.count <= 6 && !text.contains(where: { ".!?。！？".contains($0) }) { return "短语" }
         return "句子"
     }
-    public static func context(in text: String, selection: String) -> String {
+    public static func context(in text: String, selection: String, matching previousContext: String = "") -> String {
         let normalized = clean(text)
         let source = normalized as NSString
-        let range = source.range(of: clean(selection), options: [.caseInsensitive])
-        guard range.location != NSNotFound else { return clean(selection) }
-        let tagger = NSLinguisticTagger(tagSchemes: [.tokenType], options: 0)
-        tagger.string = normalized
-        let sentence = tagger.sentenceRange(for: range)
-        let lower = max(sentence.location, range.location - 350)
-        let upper = min(NSMaxRange(sentence), NSMaxRange(range) + 350)
-        return clean(source.substring(with: NSRange(location: lower, length: upper-lower)))
+        let selected = clean(selection), previous = clean(previousContext)
+        guard !selected.isEmpty else { return "" }
+        // Old cards may contain only a middle fragment. Use that fragment to
+        // locate the correct occurrence before recovering the whole sentence.
+        if !previous.isEmpty {
+            let saved = source.range(of: previous, options: [.caseInsensitive])
+            if saved.location != NSNotFound {
+                let range = source.range(of: selected, options: [.caseInsensitive], range: saved)
+                if range.location != NSNotFound { return context(in: normalized, range: range) }
+            }
+        }
+        let range = source.range(of: selected, options: [.caseInsensitive])
+        guard range.location != NSNotFound else { return previous.isEmpty ? selected : previous }
+        if !previous.isEmpty {
+            let rest = NSRange(location: NSMaxRange(range), length: source.length - NSMaxRange(range))
+            if source.range(of: selected, options: [.caseInsensitive], range: rest).location != NSNotFound {
+                return previous // An ambiguous old source is safer than a different occurrence.
+            }
+        }
+        return context(in: normalized, range: range)
     }
-    /// Read around the actual selection instead of tagging an entire article or
-    /// finding the first occurrence of a word that may appear many times.
+    /// Start locally, then expand only when a sentence touches a cut boundary.
+    /// Short sentences in large articles stay cheap; long ones are never clipped.
     public static func context(in text: String, range: NSRange) -> String {
         let source = text as NSString
         guard range.location != NSNotFound, range.length > 0,
               range.location <= source.length, range.length <= source.length - range.location else { return "" }
-        if range.length > 2000 { return clean(source.substring(with: range)) }
-        let lower = max(0, range.location - 400)
-        let upper = min(source.length, NSMaxRange(range) + 400)
-        let window = source.rangeOfComposedCharacterSequences(for: NSRange(location: lower, length: upper-lower))
-        let excerpt = source.substring(with: window)
-        let local = NSRange(location: range.location-window.location, length: range.length)
-        let tagger = NSLinguisticTagger(tagSchemes: [.tokenType], options: 0)
-        tagger.string = excerpt
-        let sentence = tagger.sentenceRange(for: local)
-        guard sentence.location != NSNotFound else { return clean(source.substring(with: range)) }
-        return clean((excerpt as NSString).substring(with: sentence))
+        var radius = 400
+        while true {
+            let lower = max(0, range.location - radius)
+            let upper = NSMaxRange(range) + min(radius, source.length - NSMaxRange(range))
+            let window = source.rangeOfComposedCharacterSequences(for: NSRange(location: lower, length: upper-lower))
+            let excerpt = source.substring(with: window)
+            let local = NSRange(location: range.location-window.location, length: range.length)
+            guard let selected = Range(local, in: excerpt) else { return clean(source.substring(with: range)) }
+            // NSLinguisticTagger.sentenceRange can silently cap long sentences
+            // at an internal buffer boundary. NLTokenizer preserves them.
+            let tokenizer = NLTokenizer(unit: .sentence); tokenizer.string = excerpt
+            let first = tokenizer.tokenRange(at: selected.lowerBound)
+            let last = tokenizer.tokenRange(at: excerpt.index(before: selected.upperBound))
+            let sentence = NSRange(first.lowerBound..<last.upperBound, in: excerpt)
+            guard sentence.location != NSNotFound, sentence.location <= local.location,
+                  NSMaxRange(sentence) >= NSMaxRange(local), NSMaxRange(sentence) <= window.length else {
+                return clean(source.substring(with: range))
+            }
+            let clippedStart = window.location > 0 && sentence.location == 0
+            let clippedEnd = NSMaxRange(window) < source.length && NSMaxRange(sentence) == window.length
+            if !clippedStart && !clippedEnd { return clean((excerpt as NSString).substring(with: sentence)) }
+            radius = min(source.length, radius > source.length / 2 ? source.length : radius * 2)
+        }
     }
 }
 

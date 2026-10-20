@@ -2,6 +2,18 @@
 
 Notable changes are recorded here. Version numbers follow `MAJOR.MINOR.PATCH`; v0.x releases may change behavior and data formats.
 
+## [0.2.4] - 2026-10-20
+
+### Fixed
+
+- Show complete English selections and translations in independently scrollable popover sections. Keep results visible during wheel/trackpad scrolling, scrollbar dragging, keyboard navigation and window resizing; Escape and explicit dismissal still close them.
+- Anchor web selection results to the reading viewport so they remain visible when the text document scrolls.
+- Remove review context line limits and make the card scroll within the available window space, keeping reveal and grading controls outside the scroll area.
+- Replace the legacy sentence API, which can silently split very long sentences, with adaptive local `NLTokenizer` sentence ranges. Preserve complete contexts without processing an entire ordinary article.
+- Recover clipped legacy review contexts from the saved PDF page or web snapshot, using the old fragment to select the right occurrence. Preserve stored lookup and review records when a source is unavailable or ambiguous.
+
+Validation: 32 core checks, Release build and 16 isolated native interface checks passed, including real local translation. Database schema and model weights are unchanged.
+
 ## [0.2.3] - 2026-10-16
 
 ### Added
@@ -108,5 +120,6 @@ Validation scope and limitations are documented in [v0.2.1 verification](docs/VE
 - Model accuracy and gap-free speech playback are not guaranteed.
 - Offline app builds use ad-hoc signing by default and are not Apple-notarized.
 
+[0.2.4]: https://github.com/yuan1615/PaperLingo/releases/tag/v0.2.4
 [0.2.3]: https://github.com/yuan1615/PaperLingo/releases/tag/v0.2.3
 [0.1.0]: https://github.com/yuan1615/PaperLingo/releases/tag/v0.1.0

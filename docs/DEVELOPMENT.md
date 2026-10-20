@@ -2,7 +2,7 @@
 
 ## 环境与构建
 
-目标为 Apple Silicon / macOS 14+。原生项目只依赖系统 SwiftUI、AppKit、PDFKit、AVFoundation、UserNotifications 和 SQLite，不需要额外的 Swift 包管理依赖。
+目标为 Apple Silicon / macOS 14+。原生项目只依赖系统 SwiftUI、AppKit、PDFKit、NaturalLanguage、AVFoundation、UserNotifications 和 SQLite，不需要额外的 Swift 包管理依赖。
 
 安装 Xcode Command Line Tools 后，在项目根目录运行：
 
@@ -109,14 +109,22 @@ PAPERLINGO_DATA_DIR="$(mktemp -d /tmp/paperlingo-dev.XXXXXX)" \
 
 ## 模块与约定
 
-- `Sources/PaperCore/`：保持无 UI 的文本、存储、复习和运行时路径逻辑。
+- `Sources/PaperCore/`：保持无 UI 的文本、存储、复习和运行时路径逻辑。长原句使用系统 `NLTokenizer` 并按需扩展局部窗口；不要重新引入固定字符截断或旧 `NSLinguisticTagger.sentenceRange` 的内部长度限制。
 - `Sources/PaperLingo/`：原生阅读、选区、视图状态、引擎生命周期和播放。
 - `engine/server.py`：只监听回环，校验 Origin、Content-Type、文本长度、语速和音色；模型惰性载入，推理串行化。
 - 分段流用 UUID 标识请求，客户端停止或重启朗读时取消旧队列；完成中的小段推理不会被强制杀死。
 - 查阅成功后才更新学习数据，失败时保留真实错误，不能写入虚构译文。
 - `PaperSummary` 与 `ResearchModels/Database/Client`：文献档案、独立笔记、FTS5、前三页输入、固定结构中文摘要与每篇一个摘要向量。持久化页码从零开始，界面显示时加一。旧实验类型只用于历史兼容，不参与当前整理流程。
 - `ResearchStore/Views`：任务与取消、一次摘要生成、分类采用、关键词与语义融合检索，以及摘要优先的研究库布局。笔记与手工元信息独立于模型结果。
-- `Readers/SelectionPopover`：PDF / 网页选区锚点、拖选结束后的就地操作和译文展示；弹层不参与正文布局，在滚动、窗口调整及退出阅读时清理。
+- `Readers/SelectionPopover`：PDF / 网页选区锚点、拖选结束后的就地操作和译文展示；弹层不参与正文布局，原文与译文独立滚动；滚动正文和调整窗口保留结果，在明确关闭、切换论文及退出阅读时清理。
 - 首次升级先通过 SQLite backup API 保存一致快照，再事务迁移到当前 `user_version=4`；不能用文件复制替代正在使用的 WAL 数据库备份。
 
 优先遵循相邻代码格式。修复数据库与队列问题时关注持久性、去重和取消边界；不要添加只复述实现的检查。提交前查看 `git diff --check`，确保没有权重、个人数据、日志或绝对开发机路径。
+
+## v0.2.4 长句回归范围
+
+2026-10-20：32 项核心检查通过，覆盖 3,000 字符以上长句在开头、中间、结尾的选区、Unicode、历史截短片段的正确来源匹配及完整上下文保存。百万字节普通网页选区仍只需一个局部分句窗口。
+
+独立应用标识和数据库中的 16 项原生界面检查通过：合成诊断 PDF / 网页的 1,315 字符选区、本机 TranslateGemma 返回、原生滚动视图偏移后的结果保留、窗口调整、Esc、网页视口锚点、旧词条按来源页恢复、860 × 620 窗口完整原句和复习播放器布局。已查看原句末尾及评分按钮的渲染截图。滚动验证采用原生滚动视图操作；未自动覆盖真实触控板的所有连续手势。测试数据未写入正式学习库。
+
+当前修改不升级数据库 schema 或模型，不重新生成 v0.2.3 的完整模型镜像。历史原句恢复只读取已保存的 PDF 页或网页快照；来源缺失或匹配不明确时保留已有上下文，不编造后续文字，也不修改历史查阅和评分事件。
