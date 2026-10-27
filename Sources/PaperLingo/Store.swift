@@ -33,6 +33,7 @@ enum Route: String, CaseIterable { case reading = "阅读空间", library="研�
     @Published var wordExplanationMessage=""
     @Published var wordExplanationError:String?
     @Published var explainingWordID:String?
+    @Published var wordExplanationBatch:WordExplanationBatch?
     var wordExplanationTask:Task<Void,Never>?
     var wordExplanationRequest=UUID()
     var wordExplanationManuallyPaused=false
@@ -97,6 +98,16 @@ enum Route: String, CaseIterable { case reading = "阅读空间", library="研�
             if selectedPaper == nil { selectedPaperID = papers.first?.id }
         } catch { self.error = error.localizedDescription }
         audio.prepareForSpeech = { [weak self] in await self?.yieldWordExplanation() }
+        audio.referenceVoice=engines.referenceVoice
+        audio.voiceCatalogSignature=engines.voiceCatalog?.signature
+    }
+    @discardableResult func selectReferenceVoice(id:String)->Bool {
+        guard engines.referenceVoice?.id != id,engines.voiceCatalog?.voices.contains(where:{$0.id == id}) == true else {return false}
+        audio.stop()
+        guard engines.selectReferenceVoice(id:id) else {return false}
+        audio.referenceVoice=engines.referenceVoice
+        audio.voiceCatalogSignature=engines.voiceCatalog?.signature
+        return true
     }
     func reload() throws {
         guard let db else { throw AppError.message("数据库未打开，请检查数据目录权限。") }
@@ -203,7 +214,7 @@ enum Route: String, CaseIterable { case reading = "阅读空间", library="研�
         do { try db?.deleteWord(word.id); try reload(); Task { await reminders.schedule(words) } } catch { self.error=error.localizedDescription }
     }
     func beginReview(listening: Bool) {
-        audio.stop(); self.listening=listening; queue=Scheduler.queue(words); reviewIndex=0; revealed=false
+        audio.stop(); self.listening=listening; queue=Scheduler.practiceQueue(words,avoiding:queue.map(\.id)); reviewIndex=0; revealed=false
         loadReviewContext()
     }
     func stopReviewContext() { reviewContextTask?.cancel(); reviewContextTask=nil }

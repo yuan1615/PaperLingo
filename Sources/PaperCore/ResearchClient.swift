@@ -139,9 +139,9 @@ public actor ResearchClient {
     public func unload(_ model: String) async {
         _ = try? await request("/api/generate", ["model": model, "stream": false, "keep_alive": 0], timeout: 10)
     }
-    public func explainWord(_ input: WordExplanationInput,timeout:TimeInterval=WordExplanationPolicy.timeout) async throws -> WordExplanationDraft {
+    public func explainWord(_ input: WordExplanationInput,timeout:TimeInterval=WordExplanationPolicy.timeout,keepAliveSeconds:Int=0) async throws -> WordExplanationDraft {
         let data = try await withThrowingTaskGroup(of: Data.self) { group in
-            group.addTask { try await self.wordExplanationData(input) }
+            group.addTask { try await self.wordExplanationData(input,keepAliveSeconds:keepAliveSeconds) }
             group.addTask {
                 try await Task.sleep(for: .seconds(min(timeout,WordExplanationPolicy.timeout)))
                 throw ResearchError.message("本次讲解已超时，已停止生成并释放资源。可稍后重试。")
@@ -162,14 +162,14 @@ public actor ResearchClient {
         catch let error as ResearchError { throw error }
         catch { throw ResearchError.message("讲解格式不完整，本次未保存，可点重试。") }
     }
-    private func wordExplanationData(_ input: WordExplanationInput) async throws -> Data {
+    private func wordExplanationData(_ input: WordExplanationInput,keepAliveSeconds:Int) async throws -> Data {
         let properties: [String: Any] = Dictionary(uniqueKeysWithValues: ["meaning", "inContext", "usage"].map {
             ($0, ["type": "string"] as [String: Any])
         })
         return try await request("/api/chat", ["model": ResearchModels.analysis, "stream": false, "think": false,
             "format": ["type": "object", "properties": properties, "required": ["meaning", "inContext", "usage"], "additionalProperties": false],
             "messages": [["role": "system", "content": WordExplanationPolicy.prompt], ["role": "user", "content": String(decoding: try JSONEncoder().encode(input), as: UTF8.self)]],
-            "options": ["temperature": 0, "num_ctx": 3072, "num_predict": 384], "keep_alive": 0], timeout: WordExplanationPolicy.timeout)
+            "options": ["temperature": 0, "num_ctx": 3072, "num_predict": 384], "keep_alive": max(0,min(60,keepAliveSeconds))], timeout: WordExplanationPolicy.timeout)
     }
     public func rerank(query:String,documents:[String],port:Int=8765) async throws->[Double] {
         guard !documents.isEmpty else{return []}

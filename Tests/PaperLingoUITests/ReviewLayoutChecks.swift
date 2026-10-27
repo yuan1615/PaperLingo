@@ -110,9 +110,36 @@ import SwiftUI
         guard let rendered = context.makeImage(), let data = NSBitmapImageRep(cgImage:rendered).representation(using:.png,properties:[:]) else { throw AppError.message("Cannot save UI") }
         try data.write(to:work.appendingPathComponent(name + ".png"))
     }
+    func practiceChecks() throws {
+        let earlier=Date().addingTimeInterval(-3600)
+        for index in 0..<30 {try store.db!.record(text:"practice-\(index)",translation:"合成练习词",context:"An isolated practice fixture.",paper:nil,page:0,now:earlier)}
+        try store.reload()
+        for word in store.words.prefix(3) {try store.db!.review(word,grade:.good,mode:"recognition")}
+        try store.db!.review(store.words[3],grade:.again,mode:"recognition")
+        try store.reload()
+        let words=store.words,due=store.dueWords.map(\.id),reviews=try store.db!.reviewsToday()
+        store.route = .review;store.beginReview(listening:false)
+        try check(store.queue.count == 20 && Set(store.queue.map(\.id)).count == 20 && store.queue.allSatisfy{due.contains($0.id)},"A practice group samples 20 distinct due cards and excludes future reviews")
+        for listening in [true,false,true,false] {
+            let previous=store.queue.map(\.id)
+            store.revealed=true
+            store.beginReview(listening:listening)
+            try check(store.queue.map(\.id) != previous && store.reviewIndex == 0 && !store.revealed && store.listening == listening,"Starting a new \(listening ? "listening" : "recognition") group changes the order and resets its card state")
+        }
+        try check(try store.db!.vocabulary() == words && store.db!.reviewsToday() == reviews && store.dueWords.map(\.id) == due,"Random group creation preserves learning records and deterministic due counts")
+        let group=store.queue.map(\.id),forgotten=store.currentCard!.id
+        store.revealed=true;store.grade(.again)
+        try check(store.queue.map(\.id) == group && store.reviewIndex == 1 && !store.revealed,"Grading advances the current group without reshuffling its remaining cards")
+        store.beginReview(listening:false)
+        try check(!store.queue.contains{$0.id == forgotten},"A just-forgotten card waits for its existing ten-minute retry interval")
+        store.stopReviewContext()
+        for word in words {try store.db!.deleteWord(word.id)}
+        try store.reload();store.queue=[];store.reviewIndex=0
+    }
     func run() async throws {
         UserDefaults.standard.set("system",forKey:"speechProvider")
         store = AppStore(); store.layout.sidebarVisible = true
+        try practiceChecks()
         let paper = Paper(id:"review-layout-fixture",title:"Synthetic review fixture",filename:"fixture.txt",kind:"WEB")
         try store.db!.addPaper(paper)
         try store.db!.record(text:"unfamiliar",translation:"不熟悉的",context:sentence,paper:paper,page:0)

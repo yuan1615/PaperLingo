@@ -2,6 +2,30 @@
 
 Notable changes are recorded here. Version numbers follow `MAJOR.MINOR.PATCH`; v0.x releases may change behavior and data formats.
 
+## [Unreleased]
+
+## [0.2.8] - 2026-10-27
+
+### Changed
+
+- Today's practice samples up to 20 distinct cards from the entire due vocabulary using weighted random selection. More lapses, repeated lookups, lower learning stages and overdue time increase a card's chance of appearing. Both recognition and listening start a fresh group; an identical previous multi-card order is avoided. Grading advances the existing group without reshuffling, and future due dates retain their intervals.
+
+v0.2.8 validation: Release build, 42 core checks, 42 isolated review checks, 60 isolated vocabulary/scheduling/voice checks and 33 Python engine tests passed. Seeded sampling checks cover selection variety and each unfamiliarity signal; native checks cover group resets, unchanged learning records and stable ordering after grading. Inspected the 860 × 620 review layout. This sampling change requires no model inference or database migration; the full offline DMG remains v0.2.3.
+
+### Added
+
+- Manual reference-speaker picker in Settings → Translation and speech, with the existing preview button. Switching stops playback and cancels queued synthesis before applying the new voice; no engine restart is required. Next launch still randomizes, avoiding the last manually selected voice when alternatives exist.
+- Private reference-voice catalog for OmniVoice cloning. Select a reference once per app launch, avoid the previous reference when alternatives exist, and retain it when the owned speech service is paused/restarted for model scheduling. Words and all sentence segments use the selected reference from the first segment.
+- Show the selected reference label in settings and playback. Validate catalog/audio checksums, reject stale-service catalog mismatches, reuse encoded prompts in memory, and include reference audio plus its transcript in cache keys. Optional private assets are copied during local builds and excluded from Git.
+- One-click vocabulary explanation batch for every word or phrase without a valid cached explanation, across the entire vocabulary regardless of search/filter. Skip cached entries and sentence cards, show progress and success/failure counts, and retain completed results when cancelled or leaving vocabulary.
+- Process sequentially and reuse the loaded model within a continuous batch. Unload before foreground translation, speech or research, then resume the unfinished queue once foreground work is idle. Individual failures do not block later entries; another click retries only missing explanations.
+
+Validation: Release build, 36 core checks and 47 isolated vocabulary/model-scheduling checks passed, including native batch-button clicks and rendered 860 × 620 / 1100 × 800 layouts. Three real batch requests took 24.22 / 9.83 / 11.30 seconds; the analysis model remained loaded between requests and was absent after explicit cleanup. Synthetic data only; no new model weights or full offline DMG.
+
+Reference-voice validation: 39 core checks, 33 Python engine checks and 51 native app checks passed. All 10 supplied references generated the same two-sentence English preview with separate caches; repeating a reference reused its cache. The installed app loaded all 10 references and changed its selected identifier after a normal quit/relaunch. Reference transcripts were prepared locally and remain marked for human review; no private recordings or transcription model are included in the source repository.
+
+Manual-speaker validation: Release build and 60 isolated native checks passed, including switching during paused playback and pending model cleanup, preserving playback for unchanged/invalid selections, and avoiding the last manual choice on the next launch. Inspected the rendered settings picker. This UI change uses the previously verified reference-voice engine and cache protocol.
+
 ## [0.2.7] - 2026-10-20
 
 ### Added
@@ -155,6 +179,8 @@ Validation scope and limitations are documented in [v0.2.1 verification](docs/VE
 - Model accuracy and gap-free speech playback are not guaranteed.
 - Offline app builds use ad-hoc signing by default and are not Apple-notarized.
 
+[Unreleased]: https://github.com/yuan1615/PaperLingo/compare/v0.2.8...HEAD
+[0.2.8]: https://github.com/yuan1615/PaperLingo/releases/tag/v0.2.8
 [0.2.7]: https://github.com/yuan1615/PaperLingo/releases/tag/v0.2.7
 [0.2.6]: https://github.com/yuan1615/PaperLingo/releases/tag/v0.2.6
 [0.2.5]: https://github.com/yuan1615/PaperLingo/releases/tag/v0.2.5

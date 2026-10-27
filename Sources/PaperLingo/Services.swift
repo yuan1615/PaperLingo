@@ -77,12 +77,30 @@ enum LocalAPI {
     let bundled: Bool
     private let paths:RuntimePaths
     let engineScript: URL
+    let voiceCatalog:SpeechVoiceCatalog?
+    @Published private(set) var referenceVoice:SpeechReferenceVoice?
+    private let voiceCatalogError:String?
     init() {
         let resource = Bundle.main.url(forResource: "runtime", withExtension: "json")
         let config = resource.flatMap { try? Data(contentsOf: $0) }.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: String] }
         paths=RuntimePaths(configuration:config ?? [:],resources:Bundle.main.resourceURL ?? URL(fileURLWithPath:FileManager.default.currentDirectoryPath),applicationSupport:FileManager.default.urls(for:.applicationSupportDirectory,in:.userDomainMask)[0])
         runtime=paths.assets;workDirectory=paths.work;bundled=paths.bundled
         engineScript = Bundle.main.resourceURL?.appendingPathComponent("engine/server.py") ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath + "/engine/server.py")
+        let resources=Bundle.main.resourceURL?.appendingPathComponent("voice-prompts")
+        let directory=resources.flatMap{FileManager.default.fileExists(atPath:$0.appendingPathComponent("manifest.json").path) ? $0:nil} ?? runtime.appendingPathComponent("voice-prompts")
+        var catalog:SpeechVoiceCatalog?,failure:String?
+        if FileManager.default.fileExists(atPath:directory.appendingPathComponent("manifest.json").path) {
+            do {catalog=try SpeechVoiceCatalog(directory:directory)} catch {failure=error.localizedDescription}
+        }
+        voiceCatalog=catalog;voiceCatalogError=failure
+        referenceVoice=catalog?.randomVoice(avoiding:UserDefaults.standard.string(forKey:"lastReferenceVoiceID"))
+        if let referenceVoice {UserDefaults.standard.set(referenceVoice.id,forKey:"lastReferenceVoiceID")}
+    }
+    @discardableResult func selectReferenceVoice(id:String)->Bool {
+        guard let selected=voiceCatalog?.voices.first(where:{$0.id == id}) else {return false}
+        referenceVoice=selected
+        UserDefaults.standard.set(selected.id,forKey:"lastReferenceVoiceID")
+        return true
     }
     func check() async {
         checking = true
@@ -104,10 +122,11 @@ enum LocalAPI {
         do {
             let data = try await LocalAPI.request(port: 8765, path: "/health")
             let result = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-            speechReady = result?["service"] as? String == "paperlingo-omnivoice" && result?["installed"] as? Bool == true && result?["protocol"] as? Int == 2
+            let catalogMatches=voiceCatalog == nil || result?["voice_catalog"] as? String == voiceCatalog?.signature
+            speechReady = result?["service"] as? String == "paperlingo-omnivoice" && result?["installed"] as? Bool == true && result?["protocol"] as? Int == 3 && catalogMatches
             rerankerReady=result?["reranker_installed"] as? Bool == true
             if let failure = result?["error"] as? String { speechReady = false; speechStatus = "加载失败：\(failure)" }
-            else if result?["service"] as? String == "paperlingo-omnivoice", result?["protocol"] as? Int != 2 {speechStatus = "语音服务版本较旧，请退出旧版 PaperLingo 后重新启动"}
+            else if result?["service"] as? String == "paperlingo-omnivoice", result?["protocol"] as? Int != 3 || !catalogMatches {speechStatus = "语音服务或声音素材已更新，请退出旧版 PaperLingo 后重新启动"}
             else { speechStatus = speechReady ? (result?["loaded"] as? Bool == true ? "模型已载入" : "服务就绪 · 首次播放加载模型") : "OmniVoice 未安装" }
         } catch { speechReady = false; speechStatus = "未启动";rerankerReady=false }
         if translationReady && speechReady {error=nil}
@@ -115,6 +134,7 @@ enum LocalAPI {
     func start() async {
         let token=lifecycle
         error = nil
+        if let voiceCatalogError {error=voiceCatalogError;return}
         await check()
         guard lifecycle == token else {return}
         do {
@@ -137,7 +157,9 @@ enum LocalAPI {
                 let marker=try Data(contentsOf:runtime.appendingPathComponent("models.ready"))
                 let manifest=try JSONSerialization.jsonObject(with:marker) as? [String:String]
                 guard let modelPath=manifest?["omnivoice"],FileManager.default.fileExists(atPath:paths.modelURL(modelPath).path) else {throw AppError.message(bundled ? "安装包中的 OmniVoice 模型不完整，请重新复制完整应用。" : "OmniVoice 模型路径无效，请重新运行安装脚本。")}
-                if speech?.isRunning != true {speech = try launch(runtime.appendingPathComponent("venv/bin/python"), args: [engineScript.path,"--model",paths.modelURL(modelPath).path,"--cache",workDirectory.appendingPathComponent("audio-cache").path,"--reranker",runtime.appendingPathComponent("models/Qwen3-Reranker-0.6B").path], log: "omnivoice.log")}
+                var arguments=[engineScript.path,"--model",paths.modelURL(modelPath).path,"--cache",workDirectory.appendingPathComponent("audio-cache").path,"--reranker",runtime.appendingPathComponent("models/Qwen3-Reranker-0.6B").path]
+                if let voiceCatalog {arguments += ["--voices",voiceCatalog.directory.path]}
+                if speech?.isRunning != true {speech = try launch(runtime.appendingPathComponent("venv/bin/python"), args:arguments, log: "omnivoice.log")}
             }
             for _ in 0..<12 {
                 try await Task.sleep(for: .milliseconds(500))
@@ -204,6 +226,8 @@ enum LocalAPI {
 @MainActor final class AudioService: NSObject, ObservableObject, AVAudioPlayerDelegate, AVSpeechSynthesizerDelegate {
     var researchBusy=false
     var prepareForSpeech:(@MainActor () async -> Void)?
+    var referenceVoice:SpeechReferenceVoice?
+    var voiceCatalogSignature:String?
     @Published var busy = false
     @Published var playing = false
     @Published var generating = false
@@ -250,15 +274,19 @@ enum LocalAPI {
             next.rate = slow ? 0.35 : 0.48
             synthesizer.speak(next); return
         }
-        label = slow ? "OmniVoice · 慢速" : "OmniVoice"
+        label = "OmniVoice"+(referenceVoice.map{" · "+$0.label} ?? "")+(slow ? " · 慢速":"")
         busy = true; generating = true
         let token = generation
+        let referenceVoice=self.referenceVoice,voiceCatalogSignature=self.voiceCatalogSignature
         task = Task {
             do {
+                try Task.checkCancellation()
                 var request = URLRequest(url: URL(string: "http://127.0.0.1:8765/speak/stream")!)
                 request.httpMethod = "POST"; request.timeoutInterval = 300
                 request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                request.httpBody = try JSONSerialization.data(withJSONObject: ["request_id": token.uuidString, "text": text, "speed": speed, "voice": voice])
+                var payload:[String:Any]=["request_id":token.uuidString,"text":text,"speed":speed,"voice":voice]
+                if let referenceVoice,let voiceCatalogSignature {payload["reference_voice"]=referenceVoice.id;payload["voice_catalog"]=voiceCatalogSignature}
+                request.httpBody = try JSONSerialization.data(withJSONObject:payload)
                 let (bytes, response) = try await LocalAPI.session.bytes(for: request)
                 guard let response = response as? HTTPURLResponse, response.statusCode == 200 else {
                     throw AppError.message("分段语音服务未就绪，请在设置中重新启动本地引擎。")

@@ -350,6 +350,7 @@ struct VocabularyScreen:View {
                 Picker("排序",selection:$sort) {ForEach(["高频优先","到期优先"],id:\.self){Text($0)}}.labelsHidden().frame(width:110)
                 Button {store.exportBackup()} label:{Label("导出",systemImage:"square.and.arrow.up")}.buttonStyle(.bordered)
             }
+            VocabularyBatchControls(store:store)
             if filtered.isEmpty { EmptyContent(icon:"square.stack",title:store.words.isEmpty ? "从阅读中收集第一份表达" : "没有找到匹配的表达",detail:"查阅一个单词或短语，成功翻译后就会出现在这里。").frame(maxHeight:.infinity) }
             else {
                 ScrollView { LazyVStack(spacing:10) {ForEach(filtered){word in WordRow(word:word,store:store)}}.padding(.bottom,15) }
@@ -365,6 +366,37 @@ struct VocabularyScreen:View {
             .onReceive(store.audio.$playing.combineLatest(store.audio.$busy,store.audio.$generating).debounce(for:.milliseconds(800),scheduler:RunLoop.main)){state in
                 if !state.0 && !state.1 && !state.2 {store.resumeWordExplanationIfNeeded()}
             }
+    }
+}
+
+struct VocabularyBatchControls:View {
+    @ObservedObject var store:AppStore
+    var body:some View {
+        let pending=store.unexplainedWords.count
+        let batch=store.wordExplanationBatch
+        HStack(spacing:16) {
+            VStack(alignment:.leading,spacing:6) {
+                if let batch {
+                    Text(batch.message).font(.system(size:12,weight:.medium)).lineLimit(1).help(batch.message)
+                    Text("已处理 \(batch.processed) / \(batch.total) · 成功 \(batch.completed) · 失败 \(batch.failed) · 跳过 \(batch.skipped)")
+                        .font(.system(size:10)).foregroundStyle(Palette.muted).help(batch.lastFailure)
+                    ProgressView(value:Double(batch.processed),total:Double(max(1,batch.total))).tint(Palette.green)
+                } else {
+                    Text("批量补全语境讲解").font(.system(size:12,weight:.medium))
+                    Text("全部生词本中有 \(pending) 个单词或短语待处理，已生成的会自动跳过。")
+                        .font(.system(size:10)).foregroundStyle(Palette.muted)
+                }
+            }.frame(maxWidth:.infinity,alignment:.leading)
+            if store.batchingWordExplanations {
+                Button("取消批量"){store.pauseWordExplanation()}.buttonStyle(.bordered).accessibilityIdentifier("vocabulary.cancelBatch")
+            } else {
+                Button {store.startWordExplanationBatch()} label:{Label(pending == 0 ? "讲解已补全" : "一键补全（\(pending)）",systemImage:"text.badge.plus")}
+                    .buttonStyle(.borderedProminent).tint(Palette.green).disabled(pending == 0)
+                    .accessibilityIdentifier("vocabulary.startBatch")
+            }
+        }
+        .padding(12).frame(minHeight:72).background(Palette.pale.opacity(0.6),in:RoundedRectangle(cornerRadius:9))
+        .help("处理整个生词本，与当前搜索和筛选无关。离开生词本会停止，已完成结果保留；下次只补未完成项。")
     }
 }
 
@@ -399,7 +431,9 @@ struct WordExplanationPanel:View {
             HStack {
                 Label("语境讲解",systemImage:"text.book.closed").font(.system(size:12,weight:.semibold))
                 Spacer()
-                if store.wordExplanationTask != nil {
+                if store.batchingWordExplanations {
+                    Text(word.kind == "句子" ? "整句保留原译文" : store.explainingWordID == word.id ? "批量生成中…" : cached == nil ? "等待批量处理" : "已保存在本机").font(.system(size:10)).foregroundStyle(Palette.muted)
+                } else if store.wordExplanationTask != nil {
                     ProgressView().controlSize(.small)
                     Button("取消"){store.pauseWordExplanation()}.buttonStyle(.bordered).font(.system(size:11))
                 } else if word.kind != "句子",store.wordExplanationError == nil {
@@ -413,7 +447,7 @@ struct WordExplanationPanel:View {
             if let error=store.wordExplanationError {
                 Text(error).font(.system(size:11)).foregroundStyle(Palette.orange).fixedSize(horizontal:false,vertical:true)
                 Button("重试"){store.showWordDetails(word,force:true)}.buttonStyle(.bordered)
-            } else if cached == nil || store.wordExplanationTask != nil {
+            } else if !store.batchingWordExplanations && (cached == nil || store.wordExplanationTask != nil) {
                 Text(store.wordExplanationMessage).font(.system(size:11)).foregroundStyle(Palette.muted)
             }
             if !source.isEmpty {
@@ -453,7 +487,7 @@ struct ReviewScreen:View {
             HStack(alignment:.top) {
                 VStack(alignment:.leading,spacing:8) {
                     Text("今日练习").font(.system(size:25,weight:.medium,design:.serif))
-                    Text("先回想，再揭晓。每天约 10 分钟。").font(.system(size:12)).foregroundStyle(Palette.muted)
+                    Text("不熟悉的优先，随机练习。每天约 10 分钟。").font(.system(size:12)).foregroundStyle(Palette.muted)
                 }
                 Spacer()
                 HStack(spacing:0) {modeButton("认词",icon:"character.book.closed",listening:false);modeButton("听力",icon:"headphones",listening:true)}.padding(4).background(Palette.pale,in:RoundedRectangle(cornerRadius:10))
@@ -627,7 +661,18 @@ struct SettingsScreen:View {
                 settingsCard("翻译与发音",icon:"waveform") {
                     HStack {Text("翻译模型").font(.system(size:12));Spacer();TextField("translategemma:4b",text:$model).textFieldStyle(.roundedBorder).frame(width:230)}
                     HStack {Text("发音引擎").font(.system(size:12));Spacer();Picker("发音引擎",selection:$speechProvider){Text("OmniVoice · 本地模型").tag("omnivoice");Text("macOS 系统语音 · 临时试听").tag("system")}.labelsHidden().frame(width:230)}
-                    HStack {Text("英语口音").font(.system(size:12));Spacer();Picker("英语口音",selection:$voice){Text("美式英语").tag("american");Text("英式英语").tag("british")}.labelsHidden().frame(width:230)}
+                    if speechProvider == "omnivoice",let selected=engines.referenceVoice,let catalog=engines.voiceCatalog {
+                        HStack {
+                            Text("发音人").font(.system(size:12));Spacer()
+                            Picker("发音人",selection:Binding(get:{engines.referenceVoice?.id ?? selected.id},set:{store.selectReferenceVoice(id:$0)})) {
+                                ForEach(catalog.voices){Text($0.label).tag($0.id)}
+                            }.labelsHidden().frame(width:230).accessibilityIdentifier("settings.referenceVoice")
+                        }
+                        Text("每次启动从 \(catalog.voices.count) 条素材中随机选择，也可在这里手动切换。切换会停止当前朗读，下次播放使用新声音；重启语音引擎保留选择，退出应用后再次启动仍会随机。素材编号不代表已确认的口音或性别。")
+                            .font(.system(size:11)).foregroundStyle(Palette.muted).fixedSize(horizontal:false,vertical:true)
+                    } else {
+                        HStack {Text("英语口音").font(.system(size:12));Spacer();Picker("英语口音",selection:$voice){Text("美式英语").tag("american");Text("英式英语").tag("british")}.labelsHidden().frame(width:230)}
+                    }
                     Button("试听一句英文"){store.audio.speak("A little reading, a little growth. Every day is a chance to learn something new.")}.buttonStyle(.bordered).font(.system(size:11))
                 }
                 ResearchModelSettings(engines:engines)
@@ -658,7 +703,7 @@ struct SettingsScreen:View {
                     HStack {Button("打开数据目录"){NSWorkspace.shared.open(store.dataURL)};Button("导出词库、档案与笔记…"){store.exportBackup()}}.buttonStyle(.bordered).font(.system(size:11))
                     Text("JSON 包含词条、论文档案、个人笔记与最新摘要，不含 PDF、完整日志或检索向量；完整备份请退出应用后复制整个数据目录。目前不支持 JSON 导入。").font(.system(size:10)).foregroundStyle(Palette.muted)
                 }
-                HStack {Text("PaperLingo 0.2.3 · macOS 原生应用");Spacer();Text("Keep reading. Keep growing.").font(.system(size:11,design:.serif))}.font(.system(size:10)).foregroundStyle(Palette.muted).padding(.bottom,10)
+                HStack {Text("PaperLingo \(Bundle.main.object(forInfoDictionaryKey:"CFBundleShortVersionString") as? String ?? "开发版") · macOS 原生应用");Spacer();Text("Keep reading. Keep growing.").font(.system(size:11,design:.serif))}.font(.system(size:10)).foregroundStyle(Palette.muted).padding(.bottom,10)
             }.padding(32).frame(maxWidth:980).frame(maxWidth:.infinity)
         }.task{await engines.check()}.onChange(of:hour){Task{await store.reminders.schedule(store.words)}}.onChange(of:minute){Task{await store.reminders.schedule(store.words)}}.onChange(of:speechProvider){store.audio.stop()}
     }

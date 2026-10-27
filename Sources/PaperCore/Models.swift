@@ -133,4 +133,31 @@ public enum Scheduler {
             return $0.priority(at: now) > $1.priority(at: now)
         }.prefix(max(0, limit)))
     }
+    public static func practiceQueue(_ words:[Vocabulary],at now:Date=Date(),limit:Int=20,avoiding previous:[String]=[]) -> [Vocabulary] {
+        var generator=SystemRandomNumberGenerator()
+        return practiceQueue(words,at:now,limit:limit,avoiding:previous,using:&generator)
+    }
+    public static func practiceQueue<R:RandomNumberGenerator>(_ words:[Vocabulary],at now:Date=Date(),limit:Int=20,avoiding previous:[String]=[],using generator:inout R) -> [Vocabulary] {
+        guard limit > 0 else {return []}
+        // An exponential race samples without replacement from all due cards.
+        // Difficult cards are more likely to appear; no fixed top-20 cutoff.
+        var ranked:[(word:Vocabulary,key:Double)]=[]
+        for word in words where word.due <= now {
+            let stage=min(3,max(0,word.stage))
+            let learning=Double(3-stage)
+            let weight:Double=1+word.priority(at:now)+learning
+            let draw=Double.random(in:0..<1,using:&generator)
+            ranked.append((word,-log(1-draw)/weight))
+        }
+        ranked.sort {a,b in
+            if a.key == b.key {return a.word.id < b.word.id}
+            return a.key < b.key
+        }
+        var selected=ranked.prefix(limit).map{$0.word}
+        // Small eligible pools can otherwise repeat the exact previous order.
+        if selected.count > 1,selected.map(\.id) == previous {
+            selected.swapAt(0,Int.random(in:1..<selected.count,using:&generator))
+        }
+        return selected
+    }
 }

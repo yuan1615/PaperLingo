@@ -13,6 +13,11 @@ from pathlib import Path
 PY
 cp "$PROJECT_ROOT/engine/server.py" "$APP_DIR/Contents/Resources/engine/server.py"
 cp "$PROJECT_ROOT/engine/rerank.py" "$APP_DIR/Contents/Resources/engine/rerank.py"
+if [ -f "$PROJECT_ROOT/.runtime/voice-prompts/manifest.json" ]; then
+  mkdir -p "$APP_DIR/Contents/Resources/voice-prompts"
+  cp "$PROJECT_ROOT/.runtime/voice-prompts/manifest.json" "$APP_DIR/Contents/Resources/voice-prompts/"
+  cp "$PROJECT_ROOT/.runtime/voice-prompts/"[0-9][0-9][0-9].wav "$APP_DIR/Contents/Resources/voice-prompts/"
+fi
 cp "$PROJECT_ROOT/packaging/Info.plist" "$APP_DIR/Contents/Info.plist"
 cp "$PROJECT_ROOT/LICENSE" "$APP_DIR/Contents/Resources/LICENSE"
 if [ -f "$PROJECT_ROOT/packaging/AppIcon.icns" ]; then cp "$PROJECT_ROOT/packaging/AppIcon.icns" "$APP_DIR/Contents/Resources/"; fi

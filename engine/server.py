@@ -8,6 +8,7 @@ import os
 import re
 import time
 import uuid
+import wave
 from pathlib import Path
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -19,6 +20,50 @@ ARGS = None
 RERANKER = None
 REQUESTS = {}
 REQUEST_LOCK = threading.Lock()
+REFERENCE_VOICES = {}
+VOICE_CATALOG_SIGNATURE = None
+
+
+def load_voice_catalog(directory):
+    """Validate the local catalog before exposing any user-provided reference."""
+    root = Path(directory).resolve()
+    raw = (root / "manifest.json").read_bytes()
+    document = json.loads(raw)
+    entries = document.get("voices")
+    if document.get("version") != 1 or not isinstance(entries, list) or not 1 <= len(entries) <= 100:
+        raise ValueError("Invalid reference voice catalog")
+    voices = {}
+    for item in entries:
+        identifier = item.get("id", "")
+        text = item.get("text", "")
+        label = item.get("label", "")
+        if not isinstance(identifier, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", identifier) or identifier in voices:
+            raise ValueError("Invalid or duplicate reference voice identifier")
+        if item.get("file") != identifier + ".wav" or not isinstance(text, str) or not 1 <= len(text.strip()) <= 1000 or not isinstance(label, str) or not 1 <= len(label) <= 40:
+            raise ValueError("Invalid reference voice file, text or label")
+        path = (root / item["file"]).resolve()
+        if not path.is_relative_to(root) or not path.is_file() or path.stat().st_size > 5_000_000:
+            raise ValueError("Reference voice is missing or outside its catalog")
+        audio = path.read_bytes()
+        if hashlib.sha256(audio).hexdigest() != item.get("sha256"):
+            raise ValueError("Reference voice checksum mismatch: " + identifier)
+        with wave.open(io.BytesIO(audio)) as clip:
+            duration = clip.getnframes() / clip.getframerate()
+            if clip.getnchannels() != 1 or clip.getsampwidth() != 2 or clip.getframerate() != 24000 or not 1 <= duration <= 20:
+                raise ValueError("Reference voice must be 1–20s mono 24kHz PCM16")
+        voices[identifier] = {"id": identifier, "label": label, "text": text.strip(), "audio": audio, "prompt": None}
+    return voices, hashlib.sha256(raw).hexdigest()
+
+
+def reference_for(payload):
+    identifier = payload.get("reference_voice")
+    if identifier is None:
+        return None
+    if not isinstance(identifier, str) or identifier not in REFERENCE_VOICES:
+        raise ValueError("Unknown reference voice; restart the speech engine")
+    if payload.get("voice_catalog") != VOICE_CATALOG_SIGNATURE:
+        raise ValueError("Reference voice catalog changed; restart the speech engine")
+    return REFERENCE_VOICES[identifier]
 
 
 class Cancelled(Exception):
@@ -82,9 +127,9 @@ def check_cancelled(event):
 
 def synthesize(text, speed, voice, cancelled=None, reference=None):
     global MODEL, LOAD_ERROR
-    signature = json.dumps(["omnivoice-0.2.1-stream-v2", ARGS.model, text, speed, voice, 16], ensure_ascii=False)
+    signature = json.dumps(["omnivoice-0.2.1-reference-v3", ARGS.model, text, speed, voice, 16], ensure_ascii=False)
     if reference is not None:
-        signature += "-reference-" + hashlib.sha256(reference["audio"]).hexdigest()
+        signature += "-reference-" + hashlib.sha256(reference["audio"] + reference["text"].encode("utf-8")).hexdigest()
     path = Path(ARGS.cache) / (hashlib.sha256(signature.encode()).hexdigest() + ".wav")
     while not LOCK.acquire(timeout=0.05):
         check_cancelled(cancelled)
@@ -110,8 +155,8 @@ def synthesize(text, speed, voice, cancelled=None, reference=None):
             if reference is None:
                 samples = MODEL.generate(text=text, language="en", instruct=f"female, {voice} accent", speed=speed, num_step=16)
             else:
-                # Reuse the first substantial segment as a fixed speaker prompt.
-                # It is constructed once, after that segment has already been sent.
+                # User references are encoded once per engine lifetime and reused
+                # for every word, sentence, speed and segment in this app session.
                 if reference.get("prompt") is None:
                     waveform, rate = sf.read(io.BytesIO(reference["audio"]), dtype="float32")
                     reference["prompt"] = MODEL.create_voice_clone_prompt(
@@ -146,10 +191,12 @@ class Handler(BaseHTTPRequestHandler):
             return
         import importlib.util
         available = importlib.util.find_spec("omnivoice") is not None
-        self.json_response(200, {"service": "paperlingo-omnivoice", "protocol": 2, "installed": available,
+        self.json_response(200, {"service": "paperlingo-omnivoice", "protocol": 3, "installed": available,
                                  "loaded": MODEL is not None, "busy": LOCK.locked(), "error": LOAD_ERROR,
                                  "reranker_installed": bool(getattr(ARGS,"reranker","") and (Path(ARGS.reranker)/"model.safetensors").is_file()),
-                                 "reranker_loaded": RERANKER is not None})
+                                 "reranker_loaded": RERANKER is not None,
+                                 "voice_catalog": VOICE_CATALOG_SIGNATURE,
+                                 "reference_voices": [{"id": v["id"], "label": v["label"]} for v in REFERENCE_VOICES.values()]})
 
     def event(self, payload):
         self.wfile.write(json.dumps(payload, ensure_ascii=False).encode() + b"\n")
@@ -185,6 +232,7 @@ class Handler(BaseHTTPRequestHandler):
             text = payload.get("text", "").strip()
             speed = float(payload.get("speed", 1.0))
             voice = payload.get("voice", "american")
+            reference = reference_for(payload)
             maximum = 12000 if self.path == "/speak/stream" else 2000
             if not text or len(text) > maximum or not 0.5 <= speed <= 1.5 or voice not in ("american", "british"):
                 raise ValueError("Invalid text, speed or voice")
@@ -192,10 +240,10 @@ class Handler(BaseHTTPRequestHandler):
             self.json_response(400, {"error": str(exc)})
             return
         if self.path == "/speak/stream":
-            self.stream(text, speed, voice, identifier, cancelled)
+            self.stream(text, speed, voice, identifier, cancelled, reference=reference)
             return
         try:
-            data = synthesize(text, speed, voice)
+            data = synthesize(text, speed, voice, reference=reference)
             self.send_response(200)
             self.send_header("Content-Type", "audio/wav")
             self.send_header("Content-Length", str(len(data)))
@@ -206,7 +254,7 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:
             self.json_response(503, {"error": str(exc)})
 
-    def stream(self, text, speed, voice, identifier, cancelled):
+    def stream(self, text, speed, voice, identifier, cancelled, reference=None):
         parts = speech_segments(text)
         self.send_response(200)
         self.send_header("Content-Type", "application/x-ndjson")
@@ -217,7 +265,6 @@ class Handler(BaseHTTPRequestHandler):
         try:
             self.event({"type": "start", "total": len(parts)})
             started = time.monotonic()
-            reference = None
             for index, part in enumerate(parts, 1):
                 check_cancelled(cancelled)
                 data = synthesize(part, speed, voice, cancelled, reference=reference)
@@ -267,13 +314,16 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    global ARGS
+    global ARGS, REFERENCE_VOICES, VOICE_CATALOG_SIGNATURE
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--model", default="k2-fsa/OmniVoice")
     parser.add_argument("--cache", required=True)
     parser.add_argument("--reranker", default="")
+    parser.add_argument("--voices", default="")
     ARGS = parser.parse_args()
+    if ARGS.voices:
+        REFERENCE_VOICES, VOICE_CATALOG_SIGNATURE = load_voice_catalog(ARGS.voices)
     Path(ARGS.cache).mkdir(parents=True, exist_ok=True)
     server = ThreadingHTTPServer(("127.0.0.1", ARGS.port), Handler)
     print(f"OmniVoice bridge ready on 127.0.0.1:{ARGS.port}", flush=True)

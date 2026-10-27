@@ -31,6 +31,7 @@ __pycache__/
 *.log
 Papers/
 audio-cache/
+voice-prompts/
 
 # Credentials, signing material and machine-specific settings
 .env

@@ -16,6 +16,8 @@ import PaperCore
         let directory=argument("--work").map{URL(fileURLWithPath:$0)} ?? URL(fileURLWithPath:".test-output/word-explanation-smoke")
         try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:true)
         let client=ResearchClient(port:port)
+        let batchMode=args.contains("--batch")
+        if batchMode {await client.unload(ResearchModels.analysis)}
         var examples=[
             ("novel","We propose a novel method for estimating uncertainty with fewer labeled examples."),
             ("novel","Participants read a novel and then answered questions about its main character."),
@@ -24,10 +26,10 @@ import PaperCore
         if args.contains("--cancel-only") {examples=[]}
         var results:[[String:Any]]=[]
         for (term,context) in examples {
-            await client.unload(ResearchModels.analysis)
+            if !batchMode {await client.unload(ResearchModels.analysis)}
             let start=Date()
             do {
-                let result=try await client.explainWord(WordExplanationInput(expression:term,context:context))
+                let result=try await client.explainWord(WordExplanationInput(expression:term,context:context),keepAliveSeconds:batchMode ? 60:0)
                 let seconds=Date().timeIntervalSince(start)
                 let row:[String:Any]=["expression":term,"context":context,"seconds":seconds,"content":try JSONSerialization.jsonObject(with:JSONEncoder().encode(result)),"characters":result.meaning.count+result.inContext.count+result.usage.count]
                 results.append(row);print(String(decoding:try JSONSerialization.data(withJSONObject:row,options:.sortedKeys),as:UTF8.self));fflush(stdout)
@@ -36,7 +38,19 @@ import PaperCore
                 throw error
             }
         }
+        var batch:[String:Any]=[:]
+        if batchMode {
+            let (data,_)=try await URLSession.shared.data(from:URL(string:"http://127.0.0.1:\(port)/api/ps")!)
+            let object=try JSONSerialization.jsonObject(with:data) as? [String:Any]
+            batch["residentModelsBeforeCleanup"]=(object?["models"] as? [Any])?.count ?? -1
+        }
         await client.unload(ResearchModels.analysis)
+        if batchMode {
+            let (data,_)=try await URLSession.shared.data(from:URL(string:"http://127.0.0.1:\(port)/api/ps")!)
+            let object=try JSONSerialization.jsonObject(with:data) as? [String:Any]
+            batch["residentModelsAfterCleanup"]=(object?["models"] as? [Any])?.count ?? -1
+            guard batch["residentModelsBeforeCleanup"] as? Int == 1,batch["residentModelsAfterCleanup"] as? Int == 0 else {throw ResearchError.message("Batch model residence or cleanup check failed")}
+        }
         var cancellation:[String:Any]=[:]
         if args.contains("--cancel-only") {
             let input=try WordExplanationInput(expression:"robust",context:"A robust estimate remains stable under perturbations.")
@@ -53,7 +67,7 @@ import PaperCore
             cancellation["residentModelsAfterCleanup"]=(object?["models"] as? [Any])?.count ?? -1
             print(String(decoding:try JSONSerialization.data(withJSONObject:cancellation,options:.sortedKeys),as:UTF8.self));fflush(stdout)
         }
-        let report:[String:Any]=["model":ResearchModels.analysis,"promptVersion":WordExplanationPolicy.version,"maxRequestSeconds":WordExplanationPolicy.timeout,"scope":"Synthetic language examples, unloaded model before each request; OS file cache may remain warm; no user database","results":results,"cancellation":cancellation]
+        let report:[String:Any]=["model":ResearchModels.analysis,"promptVersion":WordExplanationPolicy.version,"maxRequestSeconds":WordExplanationPolicy.timeout,"scope":batchMode ? "Synthetic language examples, one model load reused within a batch, explicit final unload; no user database" : "Synthetic language examples, unloaded model before each request; OS file cache may remain warm; no user database","results":results,"cancellation":cancellation,"batch":batch]
         try JSONSerialization.data(withJSONObject:report,options:[.prettyPrinted,.sortedKeys]).write(to:directory.appendingPathComponent("verification.json"))
     }
 }

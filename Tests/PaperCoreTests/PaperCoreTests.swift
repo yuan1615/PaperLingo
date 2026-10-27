@@ -311,7 +311,15 @@ let suite=PaperCoreTests()
 let evidenceSuite=EvidenceTests()
 let summarySuite=SummaryTests()
 let wordSuite=WordExplanationTests()
+let voiceSuite=SpeechVoiceTests()
+let practiceSuite=PracticeQueueTests()
 let checks:[(String,() throws -> Void)] = [
+    ("Practice queue eligibility, uniqueness and cap",practiceSuite.testEligibilityUniquenessAndCap),
+    ("Practice sampling variety and previous-order avoidance",practiceSuite.testVariedSamplingAndPreviousOrder),
+    ("Unfamiliar-card sampling probability",practiceSuite.testUnfamiliarCardsHaveHigherSamplingProbability),
+    ("Reference voice catalog and restart selection",voiceSuite.testCatalogRandomizationAndSessionSelection),
+    ("Reference audio integrity and path confinement",voiceSuite.testRejectChangedAudioAndOutwardSymlinks),
+    ("Unambiguous voice identifiers and reference text",voiceSuite.testRejectAmbiguousOrMissingReferenceText),
     ("Bounded word explanation context",wordSuite.testBoundedContextKeepsLateTermAndUnicode),
     ("Word explanation output validation",wordSuite.testOutputLimitsRejectIncompleteAndLongResults),
     ("Contextual cache invalidation and learning preservation",wordSuite.testContextCachePreservesLearningAndRejectsStaleWrites),

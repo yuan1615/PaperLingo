@@ -9,7 +9,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LOCK = threading.Lock()
-STATE = {"delay": 0.05, "unloadDelay": 0, "outcome": "valid", "calls": 0, "active": 0, "events": [], "last_request": {}}
+STATE = {"delay": 0.05, "unloadDelay": 0, "outcome": "valid", "outcomes": {}, "calls": 0, "active": 0, "max_active": 0, "events": [], "requests": [], "last_request": {}}
 
 def event(kind):
     with LOCK:
@@ -37,7 +37,7 @@ class Handler(BaseHTTPRequestHandler):
         body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))))
         if self.path == "/test/configure":
             with LOCK:
-                STATE.update({key: body[key] for key in ("delay", "outcome", "unloadDelay") if key in body})
+                STATE.update({key: body[key] for key in ("delay", "outcome", "outcomes", "unloadDelay") if key in body})
             self.reply({"ok": True})
             return
         if self.path == "/api/generate":
@@ -62,8 +62,11 @@ class Handler(BaseHTTPRequestHandler):
         with LOCK:
             STATE["calls"] += 1
             STATE["active"] += 1
+            STATE["max_active"] = max(STATE["max_active"], STATE["active"])
             STATE["last_request"] = body
-            delay, outcome = STATE["delay"], STATE["outcome"]
+            STATE["requests"].append(body)
+            expression = json.loads(body["messages"][-1]["content"])["expression"]
+            delay, outcome = STATE["delay"], STATE["outcomes"].get(expression, STATE["outcome"])
         event("chat")
         try:
             deadline = time.monotonic() + delay
