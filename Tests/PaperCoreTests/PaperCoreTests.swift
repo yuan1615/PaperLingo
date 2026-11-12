@@ -313,11 +313,17 @@ let summarySuite=SummaryTests()
 let wordSuite=WordExplanationTests()
 let voiceSuite=SpeechVoiceTests()
 let practiceSuite=PracticeQueueTests()
+let readingSuite=ReadingTextTests()
 let checks:[(String,() throws -> Void)] = [
+    ("Paper layout and compound-word repair",readingSuite.testPaperLineWrapsAndCompounds),
+    ("Selection offsets across paper layout repairs",readingSuite.testSelectionMappingAcrossLayoutRepairs),
+    ("Speech citation and redundant-initialism cleanup",readingSuite.testSpeechOmitsCitationsAndRedundantInitialisms),
+    ("Speech preserves scientific conditions and standalone terms",readingSuite.testSpeechRetainsConditionsFormulasAndStandaloneTerms),
+    ("New vocabulary retains evidence with normalized layout",readingSuite.testNewVocabularyNormalizesLayoutWithoutRemovingEvidence),
     ("Practice queue eligibility, uniqueness and cap",practiceSuite.testEligibilityUniquenessAndCap),
     ("Practice sampling variety and previous-order avoidance",practiceSuite.testVariedSamplingAndPreviousOrder),
     ("Unfamiliar-card sampling probability",practiceSuite.testUnfamiliarCardsHaveHigherSamplingProbability),
-    ("Reference voice catalog and restart selection",voiceSuite.testCatalogRandomizationAndSessionSelection),
+    ("Reference voice catalog and fixed selection",voiceSuite.testCatalogFixedSelection),
     ("Reference audio integrity and path confinement",voiceSuite.testRejectChangedAudioAndOutwardSymlinks),
     ("Unambiguous voice identifiers and reference text",voiceSuite.testRejectAmbiguousOrMissingReferenceText),
     ("Bounded word explanation context",wordSuite.testBoundedContextKeepsLateTermAndUnicode),

@@ -110,6 +110,25 @@ import SwiftUI
         guard let rendered = context.makeImage(), let data = NSBitmapImageRep(cgImage:rendered).representation(using:.png,properties:[:]) else { throw AppError.message("Cannot save UI") }
         try data.write(to:work.appendingPathComponent(name + ".png"))
     }
+    func sourceRepairChecks() async throws {
+        let paper=Paper(id:"wrap-repair",title:"Synthetic wrapped source",filename:"wrapped.txt",kind:"WEB")
+        let source="Prior sentence. The efﬁcient experi-\nmental system uses state-\nof-the-art inputs [2]. Next sentence."
+        try source.write(to:store.fileURL(paper),atomically:true,encoding:.utf8)
+        try store.db!.addPaper(paper)
+        try store.db!.record(text:"experimental",translation:"实验的",context:"The efficient experimental system uses stateof-the-art inputs [2].",paper:paper,page:0)
+        try store.reload()
+        let word=store.words[0],before=try store.db!.vocabulary()
+        await store.prepareVocabularyContext(word)
+        let recovered=store.vocabularyContext(for:word)
+        try check(recovered == "The efficient experimental system uses state-of-the-art inputs [2].","Vocabulary recovers a complete source with line breaks, ligatures and compound hyphens repaired")
+        try check(try store.db!.vocabulary() == before,"Repairing a legacy display context preserves stored quotes and learning statistics")
+        let prepare=store.audio.prepareForSpeech
+        store.audio.prepareForSpeech=nil
+        store.audio.speak(recovered);store.audio.togglePause()
+        try check(store.audio.currentText == "The efficient experimental system uses state-of-the-art inputs.","The shared playback path removes citations only from its speech copy")
+        store.audio.stop();store.audio.prepareForSpeech=prepare
+        try store.db!.deleteWord(word.id);try store.db!.deletePaper(paper.id);try store.reload()
+    }
     func practiceChecks() throws {
         let earlier=Date().addingTimeInterval(-3600)
         for index in 0..<30 {try store.db!.record(text:"practice-\(index)",translation:"合成练习词",context:"An isolated practice fixture.",paper:nil,page:0,now:earlier)}
@@ -130,8 +149,32 @@ import SwiftUI
         let group=store.queue.map(\.id),forgotten=store.currentCard!.id
         store.revealed=true;store.grade(.again)
         try check(store.queue.map(\.id) == group && store.reviewIndex == 1 && !store.revealed,"Grading advances the current group without reshuffling its remaining cards")
+        store.setReviewMode(listening:true)
+        try check(store.queue.map(\.id) == group && store.reviewIndex == 1 && store.listening && !store.revealed,"Changing recognition/listening mode preserves the current group and progress")
+        store.revealed=true;store.setReviewMode(listening:true)
+        try check(store.revealed,"Selecting the already active mode preserves the revealed answer")
+        let current=store.currentCard!.id
+        store.reviewContext="A previously recovered complete source sentence."
+        let routes:[Route]=[.reading,.library,.vocabulary,.settings]
+        for route in routes {
+            store.route=route;store.openReview()
+            try check(store.queue.map(\.id) == group && store.reviewIndex == 1 && store.currentCard?.id == current && store.listening && store.revealed && store.reviewContext == "A previously recovered complete source sentence.","Returning from \(route.rawValue) resumes the current card, order, mode, source and revealed answer")
+        }
+        let prepare=store.audio.prepareForSpeech
+        store.audio.prepareForSpeech=nil;store.route = .reading
+        store.audio.speak("A reading from another page.");store.audio.togglePause();store.openReview()
+        try check(!store.audio.playing && store.revealed && store.currentCard?.id == current,"Returning to practice stops another page's audio without resetting the card")
+        store.audio.prepareForSpeech=prepare
+        store.reviewIndex=store.queue.count;store.revealed=false
+        store.route = .settings;store.openReview()
+        try check(store.currentCard == nil && store.reviewIndex == group.count && store.queue.map(\.id) == group,"Returning to a completed group keeps its completion state")
         store.beginReview(listening:false)
         try check(!store.queue.contains{$0.id == forgotten},"A just-forgotten card waits for its existing ten-minute retry interval")
+        try check(store.queue.map(\.id) != group && store.reviewIndex == 0 && !store.revealed,"Explicitly starting another group creates a fresh randomized session")
+        let removed=store.currentCard!
+        try store.db!.deleteWord(removed.id);try store.reload()
+        store.revealed=true;store.route = .vocabulary;store.openReview()
+        try check(!store.queue.contains{$0.id == removed.id} && store.reviewIndex == 0 && !store.revealed,"Resuming safely skips a card deleted while on another page")
         store.stopReviewContext()
         for word in words {try store.db!.deleteWord(word.id)}
         try store.reload();store.queue=[];store.reviewIndex=0
@@ -139,6 +182,7 @@ import SwiftUI
     func run() async throws {
         UserDefaults.standard.set("system",forKey:"speechProvider")
         store = AppStore(); store.layout.sidebarVisible = true
+        try await sourceRepairChecks()
         try practiceChecks()
         let paper = Paper(id:"review-layout-fixture",title:"Synthetic review fixture",filename:"fixture.txt",kind:"WEB")
         try store.db!.addPaper(paper)

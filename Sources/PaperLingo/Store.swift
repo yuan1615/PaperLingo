@@ -27,6 +27,8 @@ enum Route: String, CaseIterable { case reading = "阅读空间", library="研�
     @Published var revealed = false
     @Published var listening = false
     @Published var reviewContext = ""
+    private var reviewSessionDay:Date?
+    @Published var vocabularyContexts:[String:String]=[:]
     @Published var lookupSaved = false
     @Published var expandedWordID:String?
     @Published var wordExplanations:[String:WordExplanation]=[:]
@@ -174,7 +176,7 @@ enum Route: String, CaseIterable { case reading = "阅读空间", library="研�
     func updateSelection(_ text: String, context: String, page: Int) {
         let cleaned=TextTools.clean(text)
         guard !cleaned.isEmpty, cleaned != selection || page != selectedPage || context != self.context else { return }
-        selectionVersion=UUID(); selection=cleaned; self.context=context; selectedPage=page; translation=""; lookupSaved=false
+        selectionVersion=UUID(); selection=cleaned; self.context=TextTools.clean(context); selectedPage=page; translation=""; lookupSaved=false
     }
     func clearSelection() { selectionVersion=UUID(); selection=""; context=""; translation=""; lookupSaved=false }
     func translate() async {
@@ -215,13 +217,33 @@ enum Route: String, CaseIterable { case reading = "阅读空间", library="研�
     }
     func beginReview(listening: Bool) {
         audio.stop(); self.listening=listening; queue=Scheduler.practiceQueue(words,avoiding:queue.map(\.id)); reviewIndex=0; revealed=false
+        reviewSessionDay=Date()
         loadReviewContext()
     }
+    func openReview(listening requested:Bool?=nil) {
+        if route != .review {audio.stop()}
+        route = .review
+        guard let day=reviewSessionDay,Calendar.current.isDateInToday(day) else {
+            beginReview(listening:requested ?? false);return
+        }
+        let previous=currentCard?.id
+        let available=Set(words.map(\.id))
+        let completed=queue.prefix(reviewIndex).filter{available.contains($0.id)}.count
+        queue.removeAll{!available.contains($0.id)}
+        reviewIndex=completed
+        if currentCard?.id != previous {revealed=false}
+        if let requested {setReviewMode(listening:requested)}
+        loadReviewContext(preservingDisplay:currentCard?.id == previous)
+    }
+    func setReviewMode(listening:Bool) {
+        guard self.listening != listening else {return}
+        audio.stop();self.listening=listening;revealed=false
+    }
     func stopReviewContext() { reviewContextTask?.cancel(); reviewContextTask=nil }
-    private func loadReviewContext() {
+    private func loadReviewContext(preservingDisplay:Bool=false) {
         stopReviewContext()
         guard let word = currentCard else { reviewContext=""; return }
-        reviewContext = word.context
+        if !preservingDisplay || reviewContext.isEmpty {reviewContext=TextTools.clean(word.context)}
         guard let paper = papers.first(where: { $0.id == word.paperID }) else { return }
         let url = fileURL(paper), id = word.id
         reviewContextTask = Task { [weak self] in
@@ -231,7 +253,7 @@ enum Route: String, CaseIterable { case reading = "阅读空间", library="研�
                 let source: String?
                 if paper.kind == "PDF" { source = PDFDocument(url: url)?.page(at: word.page)?.string }
                 else { source = try? String(contentsOf: url, encoding: .utf8) }
-                guard !Task.isCancelled, let source, !source.isEmpty else { return word.context }
+                guard !Task.isCancelled, let source, !source.isEmpty else { return TextTools.clean(word.context) }
                 return TextTools.context(in: source, selection: word.text, matching: word.context)
             }.value
             guard !Task.isCancelled, let self, self.currentCard?.id == id, self.route == .review else { return }

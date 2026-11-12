@@ -93,13 +93,14 @@ enum LocalAPI {
             do {catalog=try SpeechVoiceCatalog(directory:directory)} catch {failure=error.localizedDescription}
         }
         voiceCatalog=catalog;voiceCatalogError=failure
-        referenceVoice=catalog?.randomVoice(avoiding:UserDefaults.standard.string(forKey:"lastReferenceVoiceID"))
-        if let referenceVoice {UserDefaults.standard.set(referenceVoice.id,forKey:"lastReferenceVoiceID")}
+        let preferred=UserDefaults.standard.string(forKey:"selectedReferenceVoiceID") ?? UserDefaults.standard.string(forKey:"lastReferenceVoiceID")
+        referenceVoice=catalog?.preferredVoice(id:preferred)
+        if let referenceVoice {UserDefaults.standard.set(referenceVoice.id,forKey:"selectedReferenceVoiceID")}
     }
     @discardableResult func selectReferenceVoice(id:String)->Bool {
         guard let selected=voiceCatalog?.voices.first(where:{$0.id == id}) else {return false}
         referenceVoice=selected
-        UserDefaults.standard.set(selected.id,forKey:"lastReferenceVoiceID")
+        UserDefaults.standard.set(selected.id,forKey:"selectedReferenceVoiceID")
         return true
     }
     func check() async {
@@ -249,9 +250,9 @@ enum LocalAPI {
     func speak(_ text: String, slow: Bool = false) {
         guard !researchBusy || UserDefaults.standard.string(forKey:"speechProvider")=="system" else {error="论文整理进行中；可取消整理，或切换系统语音继续试听。";return}
         stop()
-        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
         guard text.count <= 12000 else { error = "选区过长，请分成小于 12,000 字符的段落朗读。"; return }
+        let text = SpeechText.prepare(text)
+        guard !text.isEmpty else {error="清理引用和排版标记后没有可朗读的正文。";return}
         let token=generation
         if let prepareForSpeech {
             busy=true

@@ -4,6 +4,17 @@ Notable changes are recorded here. Version numbers follow `MAJOR.MINOR.PATCH`; v
 
 ## [Unreleased]
 
+## [0.2.9] - 2026-11-12
+
+### Fixed
+
+- Normalize a playback copy before both OmniVoice and macOS speech: skip numeric citation markers and parenthetical initialisms immediately following their expanded form. Preserve standalone abbreviations, ordinary parenthetical content, experimental conditions and recognizable mathematical/array contexts.
+- Repair PDF line wrapping, soft hyphens, common ligatures and broken words, while retaining common compound hyphens. Track original UTF-16 selection offsets through normalization so wrapped sentences remain complete. Vocabulary contexts recover from their saved source on demand without rewriting historical learning records.
+- Resume today's active practice group when returning from another page or using the shortcut/notification. Preserve the current card, queue, progress, mode and revealed answer; mode switches retain the group. An explicit “换一组” control creates a new randomized group. Completed groups remain completed; deleted cards are skipped, and entering on a new day starts that day's group.
+- Persist a fixed reference-speaker selection across app launches and engine restarts. Migrate the previous voice identifier on upgrade and use the first catalog entry if no saved identifier is available.
+
+Validation: 47 core checks, 55 isolated native review checks, 60 vocabulary/scheduling/voice checks and 33 Python engine tests passed. Checked numeric citations, CoT/LoRA/RoPE/VAE expansions, preserved conditions and formulas, line-wrap selection offsets, source recovery, page return, completion/deletion handling and voice preference migration. Inspected the small-window review layout and fixed-speaker settings. No new models, database migration or full offline DMG.
+
 ## [0.2.8] - 2026-10-27
 
 ### Changed
@@ -179,7 +190,8 @@ Validation scope and limitations are documented in [v0.2.1 verification](docs/VE
 - Model accuracy and gap-free speech playback are not guaranteed.
 - Offline app builds use ad-hoc signing by default and are not Apple-notarized.
 
-[Unreleased]: https://github.com/yuan1615/PaperLingo/compare/v0.2.8...HEAD
+[Unreleased]: https://github.com/yuan1615/PaperLingo/compare/v0.2.9...HEAD
+[0.2.9]: https://github.com/yuan1615/PaperLingo/releases/tag/v0.2.9
 [0.2.8]: https://github.com/yuan1615/PaperLingo/releases/tag/v0.2.8
 [0.2.7]: https://github.com/yuan1615/PaperLingo/releases/tag/v0.2.7
 [0.2.6]: https://github.com/yuan1615/PaperLingo/releases/tag/v0.2.6

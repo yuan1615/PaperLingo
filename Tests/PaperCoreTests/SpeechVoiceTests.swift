@@ -13,19 +13,20 @@ final class SpeechVoiceTests {
     func write(_ voices:[[String:String]],to directory:URL) throws {
         try JSONSerialization.data(withJSONObject:["version":1,"voices":voices],options:.sortedKeys).write(to:directory.appendingPathComponent("manifest.json"))
     }
-    func testCatalogRandomizationAndSessionSelection() throws {
+    func testCatalogFixedSelection() throws {
         let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer {try? FileManager.default.removeItem(at:directory)}
         try write(fixture(directory),to:directory)
         let catalog=try SpeechVoiceCatalog(directory:directory)
         XCTAssertEqual(catalog.voices.count,2)
-        XCTAssertEqual(catalog.randomVoice(avoiding:"001").id,"002")
-        XCTAssertEqual(catalog.randomVoice(avoiding:"002").id,"001")
-        XCTAssertTrue(catalog.voices.contains(catalog.randomVoice()))
+        XCTAssertEqual(catalog.preferredVoice().id,"001")
+        XCTAssertEqual(catalog.preferredVoice(id:"002").id,"002")
+        XCTAssertEqual(catalog.preferredVoice(id:"missing").id,"001")
+        XCTAssertEqual(catalog.preferredVoice(id:"002"),catalog.preferredVoice(id:"002"))
         let raw=try String(contentsOf:directory.appendingPathComponent("manifest.json"),encoding:.utf8)
         XCTAssertEqual(catalog.signature,ResearchText.hash(raw))
         try write([fixture(directory)[0]],to:directory)
-        XCTAssertEqual(try SpeechVoiceCatalog(directory:directory).randomVoice(avoiding:"001").id,"001")
+        XCTAssertEqual(try SpeechVoiceCatalog(directory:directory).preferredVoice(id:"002").id,"001")
     }
     func testRejectChangedAudioAndOutwardSymlinks() throws {
         let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

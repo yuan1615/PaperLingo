@@ -154,13 +154,17 @@ import SwiftUI
     }
     func run()async throws {
         UserDefaults.standard.set("system",forKey:"speechProvider")
+        if ProcessInfo.processInfo.environment["PAPERLINGO_REFERENCE_VOICE_FIXTURE"] == "1" {
+            UserDefaults.standard.removeObject(forKey:"selectedReferenceVoiceID")
+            UserDefaults.standard.set("002",forKey:"lastReferenceVoiceID")
+        }
         let client=ResearchClient(port:port)
         store=AppStore(researchClient:client,translationPort:port)
         if ProcessInfo.processInfo.environment["PAPERLINGO_REFERENCE_VOICE_FIXTURE"] == "1" {
             try check(store.engines.voiceCatalog?.voices.count == 3,"The app loads its bundled reference voice catalog")
             try check(store.audio.referenceVoice == store.engines.referenceVoice && store.audio.voiceCatalogSignature == store.engines.voiceCatalog?.signature,"Speech receives the app-session voice and exact catalog signature")
             let next=EngineManager()
-            try check(next.referenceVoice?.id != store.engines.referenceVoice?.id,"A new app session selects a different reference when alternatives exist")
+            try check(next.referenceVoice == store.engines.referenceVoice && next.referenceVoice?.id == "002","A new session keeps the migrated previous voice instead of randomizing")
         }
         store.engines.analysisReady=true
         let paper=Paper(id:"vocab-fixture",title:"Synthetic language fixture",filename:"fixture.txt",kind:"WEB")
@@ -320,7 +324,7 @@ import SwiftUI
             try check(!store.selectReferenceVoice(id:initial.id) && store.audio.playing && store.audio.paused,"Selecting the current speaker does not interrupt playback")
             try check(store.selectReferenceVoice(id:other.id) && !store.audio.playing && !store.audio.busy && !store.audio.paused && store.audio.currentText.isEmpty,"Changing speakers immediately stops playback and clears its state")
             try check(store.engines.referenceVoice == other && store.audio.referenceVoice == other && store.audio.voiceCatalogSignature == store.engines.voiceCatalog?.signature,"The selected speaker and catalog are synchronized for the next reading")
-            try check(UserDefaults.standard.string(forKey:"lastReferenceVoiceID") == other.id,"Manual selection updates the most recently used speaker")
+            try check(UserDefaults.standard.string(forKey:"selectedReferenceVoiceID") == other.id,"Manual selection persists the fixed speaker preference")
             store.audio.prepareForSpeech={try? await Task.sleep(for:.milliseconds(300))}
             store.audio.speak("This queued reading should never start after a speaker change.")
             try check(store.audio.busy && store.selectReferenceVoice(id:initial.id),"A speaker can change while speech waits for model cleanup")
@@ -328,7 +332,7 @@ import SwiftUI
             try check(!store.audio.busy && !store.audio.playing && store.audio.currentText.isEmpty && store.audio.referenceVoice == initial,"Cancelled speech cannot resume with the old or new speaker")
             store.audio.prepareForSpeech=prepare
             let next=EngineManager()
-            try check(next.referenceVoice?.id != initial.id,"A new session avoids the last manually selected speaker")
+            try check(next.referenceVoice?.id == initial.id,"A new session retains the manually selected speaker")
             let selected=store.engines.referenceVoice
             store.engines.stop();await settle(200)
             try check(store.engines.referenceVoice == selected && store.audio.referenceVoice == selected,"Stopping an engine preserves the voice for the current app session")

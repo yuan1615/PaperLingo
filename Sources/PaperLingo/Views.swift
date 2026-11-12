@@ -131,8 +131,7 @@ struct Sidebar:View {
     }
     func nav(_ route:Route,icon:String,count:Int?) -> some View {
         Button {
-            store.route=route
-            if route == .review { store.beginReview(listening:false) }
+            if route == .review {store.openReview()} else {store.route=route}
         } label:{
             HStack(spacing:12) { Image(systemName:icon).font(.system(size:16)).frame(width:21); Text(route.rawValue).font(.system(size:13,weight:store.route==route ? .semibold : .regular)).lineLimit(1).minimumScaleFactor(0.85); Spacer(); if let count { Text("\(count)").font(.system(size:10,weight:.medium,design:.monospaced)).padding(.horizontal,7).padding(.vertical,3).background(.white.opacity(0.65),in:Capsule()) } }
                 .padding(.horizontal,13).frame(height:42).background(store.route==route ? Palette.green.opacity(0.10) : .clear,in:RoundedRectangle(cornerRadius:9)).contentShape(Rectangle())
@@ -316,7 +315,7 @@ struct LearningPanel:View {
                 VStack(alignment:.leading,spacing:10) {
                     Label("让不熟悉的表达，慢慢熟悉",systemImage:"leaf").font(.system(size:11,weight:.medium))
                     Text("成功查阅的单词和短语会自动积累。查得越多、越容易忘，复习优先级越高。").font(.system(size:10)).foregroundStyle(Palette.muted).lineSpacing(6)
-                    Button {store.route = .review;store.beginReview(listening:false)} label:{HStack {Text("今日待复习");Spacer();Text("\(store.dueWords.count) 项 →")}}.buttonStyle(ReadingButtonStyle()).font(.system(size:11)).foregroundStyle(Palette.green).padding(.top,5)
+                    Button {store.openReview()} label:{HStack {Text("今日待复习");Spacer();Text("\(store.dueWords.count) 项 →")}}.buttonStyle(ReadingButtonStyle()).font(.system(size:11)).foregroundStyle(Palette.green).padding(.top,5)
                 }
             }.padding(23)
         }.background(Color.white.opacity(0.52))
@@ -407,7 +406,7 @@ struct WordRow:View {
     var body:some View {
         VStack(alignment:.leading,spacing:14) {
             HStack(alignment:.top,spacing:18) {
-                VStack(alignment:.leading,spacing:7) {HStack {Text(word.text).font(.system(size:20,weight:.medium,design:.serif)).textSelection(.enabled);Text(word.kind).font(.system(size:9)).foregroundStyle(Palette.muted)};Text(word.translation).font(.system(size:12)).foregroundStyle(Palette.muted).textSelection(.enabled).lineLimit(expanded ? nil : 2)}.frame(maxWidth:.infinity,alignment:.leading)
+                VStack(alignment:.leading,spacing:7) {HStack {Text(TextTools.clean(word.text)).font(.system(size:20,weight:.medium,design:.serif)).textSelection(.enabled);Text(word.kind).font(.system(size:9)).foregroundStyle(Palette.muted)};Text(word.translation).font(.system(size:12)).foregroundStyle(Palette.muted).textSelection(.enabled).lineLimit(expanded ? nil : 2)}.frame(maxWidth:.infinity,alignment:.leading)
                 VStack(alignment:.trailing,spacing:7) {Text("查阅 \(word.lookups) 次").font(.system(size:10,weight:.medium));Text(word.due <= Date() ? "待复习" : word.due.formatted(date:.abbreviated,time:.omitted)).font(.system(size:9)).foregroundStyle(word.due <= Date() ? Palette.orange : Palette.muted)}
                 Button {store.audio.speak(word.text)} label:{Image(systemName:"speaker.wave.2")}.buttonStyle(ReadingButtonStyle()).help("朗读")
                 Button {store.toggleWordDetails(word)} label:{Label("语境讲解",systemImage:expanded ? "chevron.up" : "chevron.down").font(.system(size:11))}.buttonStyle(ReadingButtonStyle()).help("展开原句与词语讲解")
@@ -426,7 +425,7 @@ struct WordExplanationPanel:View {
     @ObservedObject var store:AppStore
     var body:some View {
         let cached=store.explanation(for:word)
-        let source=cached?.sourceContext ?? word.context
+        let source=store.vocabularyContext(for:word)
         VStack(alignment:.leading,spacing:12) {
             HStack {
                 Label("语境讲解",systemImage:"text.book.closed").font(.system(size:12,weight:.semibold))
@@ -460,6 +459,7 @@ struct WordExplanationPanel:View {
                 ReviewContextText(context:source,expression:word.text).lineSpacing(5).textSelection(.enabled).fixedSize(horizontal:false,vertical:true)
             }
         }.padding(16).frame(maxWidth:.infinity,alignment:.leading).background(Palette.pale.opacity(0.45),in:RoundedRectangle(cornerRadius:10))
+            .task(id:store.vocabularyContextKey(word)){await store.prepareVocabularyContext(word)}
     }
 }
 
@@ -497,6 +497,7 @@ struct ReviewScreen:View {
                 HStack(spacing:16) {
                     Text("\(store.reviewIndex+1) / \(store.queue.count)").font(.system(size:11,weight:.medium,design:.monospaced)).fixedSize()
                     ProgressView(value:Double(store.reviewIndex),total:Double(max(1,store.queue.count))).tint(Palette.green)
+                    Button {store.beginReview(listening:store.listening)} label:{Label("换一组",systemImage:"shuffle").font(.system(size:10)).fixedSize()}.buttonStyle(ReadingButtonStyle()).help("重新随机抽取一组到期词").accessibilityIdentifier("review.newGroup")
                     ReviewAudioControls(audio:store.audio)
                 }
                 ScrollView {
@@ -507,7 +508,7 @@ struct ReviewScreen:View {
                         Text("先听一听，你能认出来吗？").font(.system(size:19,design:.serif))
                         HStack(spacing:15) {Button {store.audio.speak(word.text)} label:{Label("播放",systemImage:"play.fill")}.buttonStyle(PrimaryButton());Button {store.audio.speak(word.text,slow:true)} label:{Label("慢速再听",systemImage:"tortoise")}.buttonStyle(.bordered)}
                     } else {
-                        Text(word.text).font(.system(size:word.kind=="句子" ? 26 : 38,weight:.medium,design:.serif)).multilineTextAlignment(.center).textSelection(.enabled).lineSpacing(7).lineLimit(nil).fixedSize(horizontal:false,vertical:true).accessibilityIdentifier("review.expression")
+                        Text(TextTools.clean(word.text)).font(.system(size:word.kind=="句子" ? 26 : 38,weight:.medium,design:.serif)).multilineTextAlignment(.center).textSelection(.enabled).lineSpacing(7).lineLimit(nil).fixedSize(horizontal:false,vertical:true).accessibilityIdentifier("review.expression")
                         HStack(spacing:12) {
                             if word.kind == "句子" && !hasSourceContext {
                                 Button {store.audio.speak(word.text)} label:{Label("朗读原句",systemImage:"speaker.wave.2.fill")}.buttonStyle(PrimaryButton()).accessibilityIdentifier("review.playExpression")
@@ -554,7 +555,7 @@ struct ReviewScreen:View {
             HStack {Image(systemName:"clock");Text(String(format:"每天 %02d:%02d · 北京时间 · 可在设置中调整",UserDefaults.standard.object(forKey:"reminderHour") as? Int ?? 20,UserDefaults.standard.object(forKey:"reminderMinute") as? Int ?? 30));Spacer();Text("今天已练习 \(store.reviewedToday) 项")}.font(.system(size:10)).foregroundStyle(Palette.muted)
         }.padding(32).onDisappear{store.audio.stop();store.stopReviewContext()}
     }
-    func modeButton(_ title:String,icon:String,listening:Bool) -> some View {Button {store.beginReview(listening:listening)} label:{Label(title,systemImage:icon).font(.system(size:12,weight:.medium)).padding(.horizontal,15).padding(.vertical,9).background(store.listening==listening ? .white : .clear,in:RoundedRectangle(cornerRadius:7))}.buttonStyle(ReadingButtonStyle())}
+    func modeButton(_ title:String,icon:String,listening:Bool) -> some View {Button {store.setReviewMode(listening:listening)} label:{Label(title,systemImage:icon).font(.system(size:12,weight:.medium)).padding(.horizontal,15).padding(.vertical,9).background(store.listening==listening ? .white : .clear,in:RoundedRectangle(cornerRadius:7))}.buttonStyle(ReadingButtonStyle())}
     func interval(_ date:Date)->String {let seconds=date.timeIntervalSinceNow;if seconds<3600{return "10 分钟后"};return "\(Int((seconds/86400).rounded())) 天后"}
 }
 
@@ -563,9 +564,10 @@ struct ReviewContextText:View {
     let expression:String
     var body:some View {Text(highlighted).font(.system(size:13,design:.serif))}
     private var highlighted:AttributedString {
+        let context=TextTools.clean(context)
         var result=AttributedString(context)
         result.foregroundColor=Palette.muted
-        let terms=expression.split(whereSeparator:{$0.isWhitespace})
+        let terms=TextTools.clean(expression).split(whereSeparator:{$0.isWhitespace})
         guard !terms.isEmpty else {return result}
         let literal=terms.map{NSRegularExpression.escapedPattern(for:String($0))}.joined(separator:"\\s+")
         // Match complete terms, including repeated/capitalized occurrences, without
@@ -668,7 +670,7 @@ struct SettingsScreen:View {
                                 ForEach(catalog.voices){Text($0.label).tag($0.id)}
                             }.labelsHidden().frame(width:230).accessibilityIdentifier("settings.referenceVoice")
                         }
-                        Text("每次启动从 \(catalog.voices.count) 条素材中随机选择，也可在这里手动切换。切换会停止当前朗读，下次播放使用新声音；重启语音引擎保留选择，退出应用后再次启动仍会随机。素材编号不代表已确认的口音或性别。")
+                        Text("已固定使用当前声音，退出或重启后也会保留。可从 \(catalog.voices.count) 条素材中手动切换并试听；切换会停止当前朗读，下次播放使用新声音。素材编号不代表已确认的口音或性别。")
                             .font(.system(size:11)).foregroundStyle(Palette.muted).fixedSize(horizontal:false,vertical:true)
                     } else {
                         HStack {Text("英语口音").font(.system(size:12));Spacer();Picker("英语口音",selection:$voice){Text("美式英语").tag("american");Text("英式英语").tag("british")}.labelsHidden().frame(width:230)}

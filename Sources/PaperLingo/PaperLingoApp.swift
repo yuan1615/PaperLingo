@@ -52,10 +52,10 @@ final class AppDelegate:NSObject,NSApplicationDelegate,UNUserNotificationCenterD
         WindowGroup("PaperLingo") {
             RootView(store:store).frame(minWidth:860,minHeight:620).preferredColorScheme(.light)
                 .onOpenURL { url in if url.isFileURL && url.pathExtension.lowercased()=="pdf" {store.importPDF(url)} }
-                .onReceive(NotificationCenter.default.publisher(for:.openReview)) { event in store.route = .review;store.beginReview(listening:event.userInfo?["listening"] as? Bool ?? false);AppDelegate.pendingListening=nil }
+                .onReceive(NotificationCenter.default.publisher(for:.openReview)) { event in store.openReview(listening:event.userInfo?["listening"] as? Bool ?? false);AppDelegate.pendingListening=nil }
                 .task {
                     delegate.store=store
-                    if let listening=AppDelegate.pendingListening {AppDelegate.pendingListening=nil;store.route = .review;store.beginReview(listening:listening)}
+                    if let listening=AppDelegate.pendingListening {AppDelegate.pendingListening=nil;store.openReview(listening:listening)}
                     await store.engines.start();await store.reminders.schedule(store.words)
                 }
                 .onReceive(NotificationCenter.default.publisher(for:NSApplication.didBecomeActiveNotification)) { _ in
@@ -82,7 +82,7 @@ final class AppDelegate:NSObject,NSApplicationDelegate,UNUserNotificationCenterD
                 Button("翻译选区") { Task { await store.translate() } }.keyboardShortcut("d")
                 Button("朗读选区") { store.audio.speak(store.selection) }.keyboardShortcut("l")
                 Button("停止朗读") { store.audio.stop() }.keyboardShortcut(".")
-                Button("今日练习") { store.route = .review; store.beginReview(listening:false) }.keyboardShortcut("r")
+                Button("今日练习") { store.openReview() }.keyboardShortcut("r")
             }
         }
     }

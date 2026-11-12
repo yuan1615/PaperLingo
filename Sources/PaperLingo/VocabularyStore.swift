@@ -211,14 +211,27 @@ extension AppStore {
         await finishWordExplanationSession(usedModel:usedModel,pausedSpeech:pausedSpeech)
     }
     func resolvedWordContext(_ word:Vocabulary) async -> String {
-        guard let paper=papers.first(where:{$0.id == word.paperID}) else {return word.context}
+        guard let paper=papers.first(where:{$0.id == word.paperID}) else {return TextTools.clean(word.context)}
         let url=fileURL(paper)
         return await Task.detached(priority:.utility) {
             let source:String?
             if paper.kind == "PDF" {source=PDFDocument(url:url)?.page(at:word.page)?.string}
             else {source=try? String(contentsOf:url,encoding:.utf8)}
-            guard let source,!source.isEmpty else {return word.context}
+            guard let source,!source.isEmpty else {return TextTools.clean(word.context)}
             return TextTools.context(in:source,selection:word.text,matching:word.context)
         }.value
+    }
+    func vocabularyContextKey(_ word:Vocabulary)->String {
+        word.id+"-"+ResearchText.hash(word.context+word.paperID+String(word.page))
+    }
+    func vocabularyContext(for word:Vocabulary)->String {
+        vocabularyContexts[vocabularyContextKey(word)] ?? TextTools.clean(word.context)
+    }
+    func prepareVocabularyContext(_ word:Vocabulary) async {
+        let key=vocabularyContextKey(word)
+        guard vocabularyContexts[key] == nil else {return}
+        let recovered=await resolvedWordContext(word)
+        guard !Task.isCancelled,words.contains(where:{$0.id == word.id && vocabularyContextKey($0) == key}) else {return}
+        vocabularyContexts[key]=recovered
     }
 }

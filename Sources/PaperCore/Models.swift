@@ -3,9 +3,7 @@ import NaturalLanguage
 
 public enum TextTools {
     public static func clean(_ text: String) -> String {
-        text.replacingOccurrences(of: "-\\s*\\n\\s*", with: "", options: .regularExpression)
-            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        ReadingText.normalize(text).text
     }
     public static func key(_ text: String) -> String {
         clean(text).lowercased().trimmingCharacters(in: .punctuationCharacters.union(.whitespacesAndNewlines))
@@ -51,21 +49,23 @@ public enum TextTools {
             let lower = max(0, range.location - radius)
             let upper = NSMaxRange(range) + min(radius, source.length - NSMaxRange(range))
             let window = source.rangeOfComposedCharacterSequences(for: NSRange(location: lower, length: upper-lower))
-            let excerpt = source.substring(with: window)
+            let raw = source.substring(with: window)
             let local = NSRange(location: range.location-window.location, length: range.length)
-            guard let selected = Range(local, in: excerpt) else { return clean(source.substring(with: range)) }
+            let normalized=ReadingText.normalize(raw,tracking:local)
+            let excerpt=normalized.text
+            guard let selected = Range(normalized.range, in: excerpt),!selected.isEmpty else { return clean(source.substring(with: range)) }
             // NSLinguisticTagger.sentenceRange can silently cap long sentences
             // at an internal buffer boundary. NLTokenizer preserves them.
             let tokenizer = NLTokenizer(unit: .sentence); tokenizer.string = excerpt
             let first = tokenizer.tokenRange(at: selected.lowerBound)
             let last = tokenizer.tokenRange(at: excerpt.index(before: selected.upperBound))
             let sentence = NSRange(first.lowerBound..<last.upperBound, in: excerpt)
-            guard sentence.location != NSNotFound, sentence.location <= local.location,
-                  NSMaxRange(sentence) >= NSMaxRange(local), NSMaxRange(sentence) <= window.length else {
+            guard sentence.location != NSNotFound, sentence.location <= normalized.range.location,
+                  NSMaxRange(sentence) >= NSMaxRange(normalized.range), NSMaxRange(sentence) <= (excerpt as NSString).length else {
                 return clean(source.substring(with: range))
             }
             let clippedStart = window.location > 0 && sentence.location == 0
-            let clippedEnd = NSMaxRange(window) < source.length && NSMaxRange(sentence) == window.length
+            let clippedEnd = NSMaxRange(window) < source.length && NSMaxRange(sentence) == (excerpt as NSString).length
             if !clippedStart && !clippedEnd { return clean((excerpt as NSString).substring(with: sentence)) }
             radius = min(source.length, radius > source.length / 2 ? source.length : radius * 2)
         }

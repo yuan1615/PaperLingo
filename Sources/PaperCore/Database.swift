@@ -114,6 +114,7 @@ public final class Database {
     }
     @discardableResult public func record(text: String, translation: String, context: String, paper: Paper?, page: Int, save: Bool = true, now: Date = Date()) throws -> String? {
         let cleaned = TextTools.clean(text), key = TextTools.key(text)
+        let context=TextTools.clean(context)
         guard !key.isEmpty, !translation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         try exec("BEGIN IMMEDIATE")
         do {
@@ -147,6 +148,7 @@ public final class Database {
     public func promote(text: String, translation: String, context: String, paper: Paper?, page: Int) throws {
         // Promotion is a new explicit save, not another lookup of the same sentence.
         let key = TextTools.key(text)
+        let context=TextTools.clean(context)
         guard !(try vocabulary()).contains(where: { TextTools.key($0.text) == key }) else { return }
         try write("INSERT INTO vocabulary VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [UUID().uuidString,key,TextTools.clean(text),translation,TextTools.kind(text),context,paper?.id ?? "",paper?.title ?? "手动查阅",page,1,0,0,Date().timeIntervalSince1970,Date().timeIntervalSince1970,Date().timeIntervalSince1970])
     }

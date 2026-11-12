@@ -39,8 +39,7 @@ public struct SpeechVoiceCatalog:Sendable {
         signature=SHA256.hash(data:data).map{String(format:"%02x",$0)}.joined()
         self.directory=directory
     }
-    public func randomVoice(avoiding previous:String?=nil)->SpeechReferenceVoice {
-        let candidates=voices.count>1 ? voices.filter{$0.id != previous}:voices
-        return candidates.randomElement()!
+    public func preferredVoice(id:String?=nil)->SpeechReferenceVoice {
+        voices.first{$0.id == id} ?? voices[0]
     }
 }
