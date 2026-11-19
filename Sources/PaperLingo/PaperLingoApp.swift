@@ -22,6 +22,7 @@ final class AppDelegate:NSObject,NSApplicationDelegate,UNUserNotificationCenterD
         store?.researchTask?.cancel();store?.searchTask?.cancel()
         store?.cancelWordExplanation()
         store?.stopReviewContext()
+        store?.stopSpeakingWork()
         store?.audio.stop()
         store?.engines.stop()
     }
@@ -82,8 +83,9 @@ final class AppDelegate:NSObject,NSApplicationDelegate,UNUserNotificationCenterD
                 Button("显示 / 收起学习助手") {store.layout.assistantVisible.toggle();store.layout.focused=false}.keyboardShortcut("i",modifiers:[.command,.option])
             }
             CommandMenu("学习") {
+                Button("口语练习") { store.openSpeaking() }.keyboardShortcut("p", modifiers: [.command, .shift])
                 Button("翻译选区") { Task { await store.translate() } }.keyboardShortcut("d")
-                Button("朗读选区") { store.audio.speak(store.selection) }.keyboardShortcut("l")
+                Button("朗读选区") { store.audio.speak(store.selection) }.keyboardShortcut("l").disabled(store.route == .speaking)
                 Button("停止朗读") { store.audio.stop() }.keyboardShortcut(".")
                 Button("今日练习") { store.openReview() }.keyboardShortcut("r")
             }

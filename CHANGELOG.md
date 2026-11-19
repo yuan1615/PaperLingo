@@ -4,6 +4,14 @@ Notable changes are recorded here. Version numbers follow `MAJOR.MINOR.PATCH`; v
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-19
+
+- Start a native speech-to-speech practice session from the sidebar, a paper, a reading selection or a vocabulary entry. Switch among paper discussion, vocabulary practice and free conversation on one Realtime connection.
+- Preview selected reference material, interrupt the coach, mute the microphone and end the session. Keep conversation transcripts in memory and save chosen expressions and linked sources to the local library.
+- Offer optional text feedback on completed learner turns and explicit vocabulary grades. Schema 6 adds saved expressions with a consistent backup of earlier databases.
+
+Verified a live OpenAI Realtime turn with synthetic English speech. The service detected the utterance and returned input and output transcripts and 0.8 seconds of reply audio. All 58 core checks passed.
+
 ## [0.3.1] - 2026-11-19
 
 - Send the original PDF in an inline Responses file input when generating an OpenAI paper summary. Use the paper’s figures, tables, and later pages for the same three-part Chinese summary. Local PDF summaries and web snapshots keep their existing input bounds.
@@ -204,7 +212,8 @@ Validation scope and limitations are documented in [v0.2.1 verification](docs/VE
 - Model accuracy and gap-free speech playback are not guaranteed.
 - Offline app builds use ad-hoc signing by default and are not Apple-notarized.
 
-[Unreleased]: https://github.com/yuan1615/PaperLingo/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/yuan1615/PaperLingo/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/yuan1615/PaperLingo/releases/tag/v0.4.0
 [0.3.1]: https://github.com/yuan1615/PaperLingo/releases/tag/v0.3.1
 [0.3.0]: https://github.com/yuan1615/PaperLingo/releases/tag/v0.3.0
 [0.2.9]: https://github.com/yuan1615/PaperLingo/releases/tag/v0.2.9

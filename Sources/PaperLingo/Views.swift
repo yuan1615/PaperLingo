@@ -48,6 +48,7 @@ struct RootView:View {
                     case .library: ResearchLibraryScreen(store:store)
                     case .vocabulary: VocabularyScreen(store:store)
                     case .review: ReviewScreen(store:store)
+                    case .speaking: SpeakingPracticeScreen(store:store, session:store.speakingSession)
                     case .settings: SettingsScreen(store:store,engines:store.engines)
                     }
                 }.frame(maxWidth:.infinity,maxHeight:.infinity)
@@ -56,7 +57,7 @@ struct RootView:View {
         }
         .overlay(alignment:.bottomTrailing) {
             if store.researchBusy && store.route != .library {ResearchCompactStatus(store:store,audio:store.audio).padding(18)}
-            else if store.route != .review {AudioBar(audio:store.audio).padding(18)}
+            else if store.route != .review && store.route != .speaking {AudioBar(audio:store.audio).padding(18)}
         }
         .onExitCommand { if layout.focused {layout.focused=false} }
         .foregroundStyle(Palette.ink).tint(Palette.green)
@@ -95,6 +96,7 @@ struct Sidebar:View {
                 nav(.library,icon:"books.vertical",count:store.papers.count)
                 nav(.vocabulary,icon:"square.stack",count:store.words.count)
                 nav(.review,icon:"sun.max",count:store.dueWords.count)
+                nav(.speaking,icon:"waveform.and.mic",count:nil)
             }.padding(.horizontal,13)
             if store.route != .library {
             HStack { Text("我的论文").font(.system(size:10,weight:.semibold)).foregroundStyle(Palette.muted); Spacer(); Button { store.choosePDF() } label:{ Image(systemName:"plus").font(.system(size:13)) }.buttonStyle(ReadingButtonStyle()).help("导入 PDF ⌘O") }.padding(.horizontal,23).padding(.top,35).padding(.bottom,12)
@@ -131,7 +133,7 @@ struct Sidebar:View {
     }
     func nav(_ route:Route,icon:String,count:Int?) -> some View {
         Button {
-            if route == .review {store.openReview()} else {store.route=route}
+            if route == .review {store.openReview()} else if route == .speaking {store.openSpeaking()} else {store.route=route}
         } label:{
             HStack(spacing:12) { Image(systemName:icon).font(.system(size:16)).frame(width:21); Text(route.rawValue).font(.system(size:13,weight:store.route==route ? .semibold : .regular)).lineLimit(1).minimumScaleFactor(0.85); Spacer(); if let count { Text("\(count)").font(.system(size:10,weight:.medium,design:.monospaced)).padding(.horizontal,7).padding(.vertical,3).background(.white.opacity(0.65),in:Capsule()) } }
                 .padding(.horizontal,13).frame(height:42).background(store.route==route ? Palette.green.opacity(0.10) : .clear,in:RoundedRectangle(cornerRadius:9)).contentShape(Rectangle())
@@ -410,7 +412,7 @@ struct WordRow:View {
                 VStack(alignment:.trailing,spacing:7) {Text("查阅 \(word.lookups) 次").font(.system(size:10,weight:.medium));Text(word.due <= Date() ? "待复习" : word.due.formatted(date:.abbreviated,time:.omitted)).font(.system(size:9)).foregroundStyle(word.due <= Date() ? Palette.orange : Palette.muted)}
                 Button {store.audio.speak(word.text)} label:{Image(systemName:"speaker.wave.2")}.buttonStyle(ReadingButtonStyle()).help("朗读")
                 Button {store.toggleWordDetails(word)} label:{Label("语境讲解",systemImage:expanded ? "chevron.up" : "chevron.down").font(.system(size:11))}.buttonStyle(ReadingButtonStyle()).help("展开原句与词语讲解")
-                Menu { Button("删除词条",role:.destructive) {store.deleteWord(word)} } label:{Image(systemName:"ellipsis")}.menuStyle(.borderlessButton).frame(width:17)
+                Menu { Button("练习用这个词说英语") {store.openSpeaking(word:word)}; Button("删除词条",role:.destructive) {store.deleteWord(word)} } label:{Image(systemName:"ellipsis")}.menuStyle(.borderlessButton).frame(width:17)
             }
             if expanded {
                 WordExplanationPanel(word:word,store:store)

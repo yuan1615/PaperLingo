@@ -7,7 +7,11 @@ import Foundation
     func close()
 }
 
-final class OpenAIWebSocket: RealtimeSpeechSocket {
+protocol RealtimeHeartbeat: Sendable {
+    func ping() async throws
+}
+
+final class OpenAIWebSocket: RealtimeSpeechSocket, RealtimeHeartbeat {
     private let task: URLSessionWebSocketTask
 
     init(_ request: URLRequest, session: URLSession) {
@@ -25,6 +29,14 @@ final class OpenAIWebSocket: RealtimeSpeechSocket {
         }
     }
     func close() { task.cancel() }
+    func ping() async throws {
+        try await withCheckedThrowingContinuation { (done: CheckedContinuation<Void, Error>) in
+            task.sendPing { error in
+                if let error { done.resume(throwing: error) }
+                else { done.resume() }
+            }
+        }
+    }
 }
 
 enum RealtimeSpeech {

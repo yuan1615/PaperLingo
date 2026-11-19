@@ -36,15 +36,18 @@ public struct OpenAIClient: Sendable {
 
     private static let responsesURL = URL(string: "https://api.openai.com/v1/responses")!
     private static let sharedSession = makeSession()
+    private static let practiceTransport = makeSession(resourceTimeout: 3_660)
     private let session: URLSession
     private let apiKey: String
     private let realtimeSocket: (@Sendable (URLRequest) -> any RealtimeSpeechSocket)?
+    private let practiceSocket: (@Sendable (URLRequest) -> any RealtimeSpeechSocket)?
     private let realtimeTimeout: Duration
 
     public init(apiKey: String) {
         self.apiKey = apiKey
         session = Self.sharedSession
         realtimeSocket = { OpenAIWebSocket($0, session: Self.sharedSession) }
+        practiceSocket = { OpenAIWebSocket($0, session: Self.practiceTransport) }
         realtimeTimeout = .seconds(90)
     }
 
@@ -55,10 +58,11 @@ public struct OpenAIClient: Sendable {
         self.apiKey = apiKey
         session = Self.makeSession(protocolClass: protocolClass)
         self.realtimeSocket = realtimeSocket
+        practiceSocket = realtimeSocket
         self.realtimeTimeout = realtimeTimeout
     }
 
-    private static func makeSession(protocolClass: URLProtocol.Type? = nil) -> URLSession {
+    private static func makeSession(protocolClass: URLProtocol.Type? = nil, resourceTimeout: TimeInterval = 180) -> URLSession {
         let config = URLSessionConfiguration.ephemeral
         config.urlCache = nil
         config.urlCredentialStorage = nil
@@ -66,7 +70,7 @@ public struct OpenAIClient: Sendable {
         config.httpShouldSetCookies = false
         config.requestCachePolicy = .reloadIgnoringLocalCacheData
         config.timeoutIntervalForRequest = 90
-        config.timeoutIntervalForResource = 180
+        config.timeoutIntervalForResource = resourceTimeout
         if let protocolClass { config.protocolClasses = [protocolClass] }
         return ModelHTTPSession.make(configuration: config)
     }
@@ -119,6 +123,23 @@ public struct OpenAIClient: Sendable {
         guard let realtimeSocket else { throw Failure("语音连接未配置。") }
         return try await RealtimeSpeech.synthesize(input: input, voice: voice, key: apiKey,
                                                    timeout: realtimeTimeout, connect: realtimeSocket)
+    }
+
+    public func voicePracticeSession(instructions: String, material: String? = nil, voice: String = Self.defaultVoice,
+                                     onEvent: @escaping @Sendable (VoicePracticeEvent) async -> Void,
+                                     interruptPlayback: @escaping @Sendable (String) async -> Int?) throws -> VoicePracticeSession {
+        guard !apiKey.isEmpty, apiKey.utf8.count <= 1024, apiKey.utf8.allSatisfy({ (33...126).contains($0) }) else {
+            throw Failure("请在设置中保存有效的 OpenAI API Key。")
+        }
+        guard Self.voices.contains(voice) else { throw Failure("请选择有效的 OpenAI 发音人。") }
+        try VoicePracticeSession.validate(instructions: instructions, material: material)
+        var request = URLRequest(url: URL(string: "wss://api.openai.com/v1/realtime?model=" + Self.speechModel)!,
+                                 timeoutInterval: 30)
+        request.setValue("Bearer " + apiKey, forHTTPHeaderField: "Authorization")
+        let connectionRequest = request
+        guard let connect = practiceSocket else { throw Failure("语音连接未配置。") }
+        return VoicePracticeSession(instructions: instructions, material: material, voice: voice, timeout: realtimeTimeout,
+                                    connect: { connect(connectionRequest) }, onEvent: onEvent, interruptPlayback: interruptPlayback)
     }
 
     private func post(_ url: URL, payload: [String: Any]) async throws -> Data {

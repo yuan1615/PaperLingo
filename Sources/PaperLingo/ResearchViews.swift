@@ -339,7 +339,8 @@ struct ResearchPaperDetail: View {
                     Text("摘要").tag(1)
                     Text("笔记 \(notes.count)").tag(2)
                     Text("资料").tag(0)
-                }.pickerStyle(.segmented).labelsHidden().frame(maxWidth: 320)
+                    if !expressions.isEmpty { Text("口语表达 \(expressions.count)").tag(3) }
+                }.pickerStyle(.segmented).labelsHidden().frame(maxWidth: 440)
             }.padding(.horizontal, 20).padding(.vertical, 12)
             Divider()
             ScrollView {
@@ -351,6 +352,7 @@ struct ResearchPaperDetail: View {
                     switch tab {
                     case 0: archive
                     case 1: digest
+                    case 3: ForEach(expressions) { expression in SpeakingSavedRow(store: store, expression: expression) }
                     default: personalNotes
                     }
                 }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
@@ -374,11 +376,17 @@ struct ResearchPaperDetail: View {
                 Text("删除后无法在 app 内撤销，可先导出论文档案。")
             }
     }
+    private var expressions: [SpeakingPracticeExpression] {
+        store.speakingExpressions.filter { $0.source?.paperID == paper.id }
+    }
     @ViewBuilder private var actions: some View {
         Button {
             store.open(paper)
         } label: {
             Label("读原文", systemImage: "doc.text")
+        }.buttonStyle(.bordered).controlSize(.small)
+        Button { store.openSpeaking(paper: paper) } label: {
+            Label("聊这篇", systemImage: "mic")
         }.buttonStyle(.bordered).controlSize(.small)
         Menu {
             Button("新建笔记") { store.newNote(paper) }

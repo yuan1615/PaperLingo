@@ -16,11 +16,12 @@ public final class Database {
         guard sqlite3_open(url.path, &handle) == SQLITE_OK else { throw StorageError.sqlite("无法打开数据库") }
         sqlite3_busy_timeout(handle, 5000)
         let version = try rows("PRAGMA user_version") { Int(sqlite3_column_int($0,0)) }.first ?? 0
-        guard version <= 5 else { throw StorageError.sqlite("数据库由更新版本创建，请使用新版 PaperLingo。") }
-        if existed && version < 5 {
+        guard version <= 6 else { throw StorageError.sqlite("数据库由更新版本创建，请使用新版 PaperLingo。") }
+        if existed && version < 6 {
             let directory=url.deletingLastPathComponent().appendingPathComponent("Backups")
             try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:true)
-            let target=directory.appendingPathComponent("library-before-\(version < 4 ? "v0.2.2" : "v0.2.7")-\(UUID().uuidString).sqlite")
+            let upgrade = version == 5 ? "v0.4.0" : (version < 4 ? "v0.2.2" : "v0.2.7")
+            let target=directory.appendingPathComponent("library-before-\(upgrade)-\(UUID().uuidString).sqlite")
             try backup(to:target)
             migrationBackupURL=target
         }
@@ -37,13 +38,14 @@ public final class Database {
         """)
         try migrateEvidenceSchema()
         try migrateResearchSchema()
+        try migrateSpeakingPracticeSchema()
         if version < 4 {
             // Retired experiment/full-text caches are recoverable from the upgrade backup.
             // Papers, annotations, vocabulary and reading positions remain untouched.
             try exec("DELETE FROM paper_ledgers; DELETE FROM experiment_reviews; DELETE FROM research_cache; DELETE FROM paper_analysis_cache; DELETE FROM paper_chunks; DELETE FROM paper_text_status;")
             needsIndexCompaction = true
         }
-        try exec("PRAGMA user_version=5; COMMIT;")
+        try exec("PRAGMA user_version=6; COMMIT;")
         } catch { try? exec("ROLLBACK"); throw error }
         if needsIndexCompaction {
             // Reclaim the retired page vectors/FTS storage once. A concurrent
@@ -133,11 +135,18 @@ public final class Database {
         } catch { try? exec("ROLLBACK"); throw error }
     }
     public func review(_ word: Vocabulary, grade: Grade, mode: String, now: Date = Date()) throws {
-        let next = Scheduler.next(stage: word.stage, grade: grade, now: now)
+        try review(wordID: word.id, grade: grade, mode: mode, now: now)
+    }
+
+    func review(wordID: String, grade: Grade, mode: String, now: Date) throws {
         try exec("BEGIN IMMEDIATE")
         do {
-            try write("UPDATE vocabulary SET stage=?,due=?,lapses=lapses+? WHERE id=?", [next.stage,next.due.timeIntervalSince1970,grade == .again ? 1 : 0,word.id])
-            try write("INSERT INTO reviews(word_id,grade,mode,created,next_due) VALUES(?,?,?,?,?)", [word.id,grade.rawValue,mode,now.timeIntervalSince1970,next.due.timeIntervalSince1970])
+            // A card can be open in Today's Practice while the speaking coach grades the same word.
+            let stages = try rows("SELECT stage FROM vocabulary WHERE id=?", [wordID]) { Int(sqlite3_column_int($0, 0)) }
+            guard let stage = stages.first else { throw StorageError.sqlite("这条生词已经移除。") }
+            let next = Scheduler.next(stage: stage, grade: grade, now: now)
+            try write("UPDATE vocabulary SET stage=?,due=?,lapses=lapses+? WHERE id=?", [next.stage,next.due.timeIntervalSince1970,grade == .again ? 1 : 0,wordID])
+            try write("INSERT INTO reviews(word_id,grade,mode,created,next_due) VALUES(?,?,?,?,?)", [wordID,grade.rawValue,mode,now.timeIntervalSince1970,next.due.timeIntervalSince1970])
             try exec("COMMIT")
         } catch { try? exec("ROLLBACK"); throw error }
     }

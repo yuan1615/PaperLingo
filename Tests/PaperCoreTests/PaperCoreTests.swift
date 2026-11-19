@@ -314,7 +314,11 @@ let wordSuite=WordExplanationTests()
 let voiceSuite=SpeechVoiceTests()
 let practiceSuite=PracticeQueueTests()
 let readingSuite=ReadingTextTests()
+let speakingSuite = SpeakingPracticeTests()
 let checks:[(String,() throws -> Void)] = [
+    ("Speaking modes and bounded source material", speakingSuite.testSourcesAndModes),
+    ("Speaking expressions and explicit vocabulary reviews", speakingSuite.testSaveEditAndReview),
+    ("Speaking migration from v0.3.1", speakingSuite.testSchemaFiveUpgrade),
     ("Paper layout and compound-word repair",readingSuite.testPaperLineWrapsAndCompounds),
     ("Selection offsets across paper layout repairs",readingSuite.testSelectionMappingAcrossLayoutRepairs),
     ("Speech citation and redundant-initialism cleanup",readingSuite.testSpeechOmitsCitationsAndRedundantInitialisms),
@@ -370,6 +374,7 @@ for (name,run) in checks {
 }
 let online = OpenAIClientTests()
 let onlineChecks: [(String, () async throws -> Void)] = [
+    ("Voice practice connection, turns and interruptions", runVoicePracticeProtocolChecks),
     ("Complete online PDF request and provenance", online.testCompletePDFSummaryRequest),
     ("Offline rejection of invalid or oversized PDF inputs", online.testPDFInputBoundaries),
     ("Online text request policy and structured results", online.testTextPolicyAndStructuredResponses),

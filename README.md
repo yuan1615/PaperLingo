@@ -10,14 +10,32 @@ Read papers. Learn words in context. Listen and review locally.
 
 ![macOS 14+](https://img.shields.io/badge/macOS-14%2B-black)
 ![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-M%20series-blue)
-![Version](https://img.shields.io/badge/version-0.3.1-blue)
+![Version](https://img.shields.io/badge/version-0.4.0-blue)
 [![MIT](https://img.shields.io/badge/source%20license-MIT-green)](LICENSE)
 
 PaperLingo 将 PDF 与网页阅读、选词翻译、英文发音和间隔复习放在同一阅读空间。研究库可根据完整 PDF（OpenAI）或前三页文字（本地）整理研究动机、核心方法和实验结果，每篇用一份中文摘要建立本地检索索引。
 
 首次安装默认使用本地服务。在「设置 → 模型服务」可分别设置翻译、摘要与生词讲解、朗读。每台 Mac 会记住自己的选择，重启后仍然生效。
 
-[模型更新](#v031-模型更新) · [PDF 摘要对照](#pdf-摘要范围) · [快速开始](#快速开始) · [使用方式](#使用方式) · [项目架构](#项目架构) · [开发指南](docs/DEVELOPMENT.md) · [离线打包](docs/DISTRIBUTION.md) · [变更记录](CHANGELOG.md)
+[Mac 口语练习](#v040-mac-口语练习) · [模型更新](#v031-模型更新) · [PDF 摘要对照](#pdf-摘要范围) · [快速开始](#快速开始) · [使用方式](#使用方式) · [项目架构](#项目架构) · [开发指南](docs/DEVELOPMENT.md) · [离线打包](docs/DISTRIBUTION.md) · [变更记录](CHANGELOG.md)
+
+## v0.4.0 Mac 口语练习
+
+在侧栏点「口语练习」，或按 `⇧⌘P`，再从顶部选择模式。第一次使用时，先在「设置 → 模型服务」保存 OpenAI 项目密钥。密钥保存在这台 Mac 的钥匙串中。
+
+| 模式 | 从哪里开始，怎么练 | 可以这样开口 |
+| --- | --- | --- |
+| **论文讨论** | 在「讨论论文」选一篇，或在研究库的论文详情点「聊这篇」。展开摘要查看覆盖范围，用英语解释其中一个方法或结果。没有可用摘要时，这两个入口只带入标题。要讨论具体段落，可在阅读时选中原文，点「… → 用这段原文练口语」。 | “The authors compare two training methods. Let me explain how they differ.” |
+| **生词练习** | 在「目标词」选一个词，或在生词本的词条上点「… → 练习用这个词说英语」。看一眼释义和已保存的原句，用英语解释词义，再换个情境造句。 | 练 *baseline* 时可以说 “We used the smaller model as our baseline.” |
+| **自由对话** | 选「自由对话」即可开始，无需准备论文或词条。提出一个话题，或请教练先问你一个问题。 | “I have a presentation tomorrow. Can we practice the opening?” |
+
+点「开始对话」，首次使用时允许麦克风访问。看到「轮到你说」就可以开口。麦克风音频和已选材料直接发送给 OpenAI 的 `gpt-realtime-2.1-mini`，实时语音、转写和可选的文字复盘按 API 用量计费。
+
+**通话中切换。** 点顶部的另一种模式即可接着聊，之前的发言和已加入的材料仍在同一场对话里。要换一篇论文或练另一个词，选好后点「将这份材料带入当前对话」。教练说话时可以直接插话，也可点「我来说」。需要暂时关麦时点「静音」。
+
+**结束与保存。** 点「结束对话」进入复盘。离开练习页也会停止麦克风采集并断开连接。在「本次对话转写」里找到自己的发言，点「保存这句」，或点「生成表达建议」把最近最多 12 段自己的转写发给 OpenAI，获得最多 3 条修改建议。选中想留的一条，点「编辑并保存」，确认内容与关联材料后点「存到我的表达」。
+
+保存的句子可在「已保存表达」回看，关联了论文的也会出现在该论文详情的「口语表达」中。App 仅在内存中处理通话音频和完整转写，点「开始新对话」会清空上一场转写。复盘时可自评本次练过的词条，评分后才更新其复习到期日。[Mac 练习设计](docs/V0.4.0_PLAN.md) · [OpenAI 实时对话](https://developers.openai.com/api/docs/guides/realtime-conversations)
 
 ## v0.3.1 模型更新
 
@@ -147,6 +165,7 @@ open dist/PaperLingo.app
 | `⌘L` | 朗读选区 |
 | `⌘.` | 停止播放 |
 | `⇧⌘K` | 打开研究库 |
+| `⇧⌘P` | 打开口语练习 |
 | `⇧⌘N` | 为当前论文新建笔记并附入选区 |
 | `⌘S` | 在笔记编辑器中保存 |
 
@@ -210,7 +229,7 @@ docs/                     产品设计、开发、分发与验收记录
 
 首次升级 v0.2.2 会先用 SQLite 在线备份 API 保存一致数据库到 `Backups/library-before-v0.2.2-*.sqlite`，再以事务清理旧实验台账、核对记录、全文缓存和旧向量。原论文、词库、复习记录、阅读位置与个人笔记保留；历史摘要可查看，需重新生成才能进入新向量索引。升级备份供恢复旧数据使用，不参与新功能。旧版 app 不应打开新版数据库。
 
-迁移前先在两台电脑退出 app，再复制完整用户数据目录；可跳过 `Engine/` 缓存，存在的 SQLite `-wal` / `-shm` 辅助文件须一并保留。新机已有数据时先备份。JSON 导出版本为 5，包含词库、文献档案、个人笔记与最新摘要；不含实验记录、PDF、完整日志或向量，没有 JSON 导入。
+迁移前先在两台电脑退出 app，再复制完整用户数据目录；可跳过 `Engine/` 缓存，存在的 SQLite `-wal` / `-shm` 辅助文件须一并保留。新机已有数据时先备份。JSON 导出版本为 6，包含词库、文献档案、个人笔记、已保存口语表达与最新摘要；不含实验记录、PDF、完整日志或向量，没有 JSON 导入。
 
 ## 开发与验证
 

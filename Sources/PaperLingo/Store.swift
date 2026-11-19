@@ -4,10 +4,15 @@ import PDFKit
 import PaperCore
 import UniformTypeIdentifiers
 
-enum Route: String, CaseIterable { case reading = "阅读空间", library="研究库", vocabulary = "生词本", review = "今日练习", settings = "设置" }
+enum Route: String, CaseIterable { case reading = "阅读空间", library="研究库", vocabulary = "生词本", review = "今日练习", speaking = "口语练习", settings = "设置" }
 
 @MainActor final class AppStore: ObservableObject {
-    @Published var route: Route = .library {didSet {if route != .vocabulary {cancelWordExplanation()}}}
+    @Published var route: Route = .library {
+        didSet {
+            if route != .vocabulary { cancelWordExplanation() }
+            if oldValue == .speaking && route != .speaking { stopSpeakingWork() }
+        }
+    }
     @Published var papers: [Paper] = []
     @Published var words: [Vocabulary] = []
     @Published var selectedPaperID: String?
@@ -98,16 +103,32 @@ enum Route: String, CaseIterable { case reading = "阅读空间", library="研�
     private var reviewContextTask: Task<Void, Never>?
     let engines = EngineManager()
     let audio = AudioService()
+    let speakingSession: SpeakingSession
+    var speakingTurnContexts: [String: (mode: SpeakingPracticeMode, source: SpeakingPracticeSource?)] = [:]
+    var speakingStartTime: Date?
+    @Published var speakingMode = SpeakingPracticeMode(rawValue: UserDefaults.standard.string(forKey: "speakingMode") ?? "") ?? .paper
+    @Published var speakingPaperID: String?
+    @Published var speakingWordID: String?
+    @Published var speakingExcerpt: SpeakingPracticeSource?
+    @Published var speakingMaterials: [SpeakingPracticeSource] = []
+    @Published var speakingExpressions: [SpeakingPracticeExpression] = []
+    @Published var speakingRated: Set<String> = []
+    @Published var speakingSuggestions: [SpeakingPracticeExpression] = []
+    @Published var speakingFeedbackBusy = false
+    @Published var speakingMessage: String?
+    var speakingFeedbackTask: Task<Void, Never>?
+    var speakingFeedbackGeneration = UUID()
     let layout = ReaderLayout()
     let reminders = Reminders()
     var selectedPaper: Paper? { papers.first { $0.id == selectedPaperID } }
     var dueWords: [Vocabulary] { Scheduler.queue(words, limit: Int.max) }
     var currentCard: Vocabulary? { queue.indices.contains(reviewIndex) ? queue[reviewIndex] : nil }
-    init(researchClient:ResearchClient=ResearchClient(),translationPort:Int=11434,
+    init(researchClient:ResearchClient=ResearchClient(),translationPort:Int=11434, speakingSession: SpeakingSession? = nil,
          onlineClient: @escaping () throws -> OpenAIClient = OnlineAccess.client) {
         self.researchClient=researchClient
         self.translationPort=translationPort
         self.onlineClient=onlineClient
+        self.speakingSession = speakingSession ?? SpeakingSession()
         let env = ProcessInfo.processInfo.environment["PAPERLINGO_DATA_DIR"]
         let configURL=Bundle.main.url(forResource:"runtime",withExtension:"json")
         let config=configURL.flatMap{try? Data(contentsOf:$0)}.flatMap{try? JSONSerialization.jsonObject(with:$0) as? [String:String]}
@@ -128,6 +149,7 @@ enum Route: String, CaseIterable { case reading = "阅读空间", library="研�
     func credentialsDidChange() {
         if translationOnline { translationTask?.cancel() }
         if analysisOnline { researchTask?.cancel(); pauseWordExplanation() }
+        stopSpeakingWork()
         audio.resetOnlineSpeech()
     }
     @discardableResult func selectReferenceVoice(id:String)->Bool {
@@ -142,6 +164,7 @@ enum Route: String, CaseIterable { case reading = "阅读空间", library="研�
         guard let db else { throw AppError.message("数据库未打开，请检查数据目录权限。") }
         papers=try db.papers();words=try db.vocabulary();reviewedToday=try db.reviewsToday()
         wordExplanations=try db.wordExplanations()
+        speakingExpressions = try db.speakingExpressions()
         records=try db.paperRecords();digests=try db.latestDigests();researchNotes=try db.allNotes();textStatuses=try db.textStatuses()
     }
     func open(_ paper: Paper, page: Int? = nil) {
@@ -313,13 +336,14 @@ enum Route: String, CaseIterable { case reading = "阅读空间", library="研�
         guard panel.runModal() == .OK, let url=panel.url else { return }
         do {
             struct Backup: Codable {
-                var version=5;var exported=Date()
+                var version=6;var exported=Date()
                 var papers:[Paper];var vocabulary:[Vocabulary]
                 var records:[PaperRecord];var notes:[PaperNote];var digests:[PaperDigest]
+                var speakingExpressions: [SpeakingPracticeExpression]
                 var wordExplanations:[WordExplanation]
             }
             let encoder=JSONEncoder(); encoder.outputFormatting=[.prettyPrinted,.sortedKeys]; encoder.dateEncodingStrategy = .iso8601
-            try encoder.encode(Backup(papers:papers,vocabulary:words,records:papers.map{record(for:$0)},notes:researchNotes,digests:Array(digests.values),wordExplanations:words.compactMap{explanation(for:$0)})).write(to:url,options:.atomic)
+            try encoder.encode(Backup(papers:papers,vocabulary:words,records:papers.map{record(for:$0)},notes:researchNotes,digests:Array(digests.values),speakingExpressions:speakingExpressions,wordExplanations:words.compactMap{explanation(for:$0)})).write(to:url,options:.atomic)
             toast="词库、论文档案和笔记已导出。PDF 与完整日志仍需备份数据目录。"
         } catch { self.error=error.localizedDescription }
     }

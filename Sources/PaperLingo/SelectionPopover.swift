@@ -138,6 +138,11 @@ private struct SelectionActionPopover: View {
                         Task { await store.translate() }
                     }.disabled(store.context.isEmpty || store.context == store.selection || store.context.count > 4000 || store.translating || store.translationBlocked)
                     Divider()
+                    Button("用这段原文练口语") {
+                        guard let paper = store.selectedPaper else { return }
+                        store.openSpeaking(paper: paper, excerpt: store.selection, page: store.selectedPage)
+                        dismiss()
+                    }
                     Button("保存选区到笔记") {
                         dismiss()
                         if let paper = store.selectedPaper { store.newNote(paper, fromSelection: true) }
