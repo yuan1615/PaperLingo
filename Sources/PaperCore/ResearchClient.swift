@@ -26,7 +26,7 @@ public actor ResearchClient {
         configuration.connectionProxyDictionary = [:]
         configuration.timeoutIntervalForRequest = 600
         configuration.timeoutIntervalForResource = 1800
-        session = URLSession(configuration: configuration)
+        session = ModelHTTPSession.make(configuration: configuration)
     }
     private func request(_ path: String, _ body: [String: Any], timeout: TimeInterval = 600) async throws -> Data {
         try Task.checkCancellation()
@@ -48,21 +48,9 @@ public actor ResearchClient {
         return data
     }
     public func summarizeOpening(_ source: PaperSummarySource, signature: String = ResearchModels.analysis) async throws -> PaperDigest {
-        guard !source.chunks.isEmpty, source.status.extractionVersion == PaperSummary.version,
-              source.chunks.count <= 3, source.chunks.allSatisfy({ (0..<3).contains($0.page) && $0.paperID == source.status.paperID }) else {
-            throw ResearchError.message("只能整理前三页的有效文字；扫描件请先 OCR。")
-        }
-        let string: [String: Any] = ["type": "string"]
-        let schema: [String: Any] = ["type": "object", "properties": [
-            "oneLine": string, "motivation": string, "method": string, "results": string, "category": string,
-            "tags": ["type": "array", "items": string, "maxItems": 5]],
-            "required": ["oneLine", "motivation", "method", "results", "category", "tags"], "additionalProperties": false]
-        let excerpts = source.chunks.map { ["page": String($0.page + 1), "text": $0.text] }
-        let context = String(decoding: try JSONSerialization.data(withJSONObject: excerpts), as: UTF8.self)
-        // Reject exceptionally dense pages explicitly instead of silently truncating the source.
-        guard context.utf8.count < 42000 else { throw ResearchError.message("前三页文字超出本地摘要上下文容量；未截断输入，请检查 PDF 文字层。") }
+        let context = try source.modelInput()
         let data = try await request("/api/chat", ["model": ResearchModels.analysis, "stream": false, "think": false,
-            "format": schema, "messages": [["role": "system", "content": PaperSummary.prompt], ["role": "user", "content": context]],
+            "format": PaperSummary.schema, "messages": [["role": "system", "content": PaperSummary.prompt], ["role": "user", "content": context]],
             "options": ["temperature": 0, "num_ctx": 16384, "num_predict": 1600], "keep_alive": "2m"])
         let draft = try decodeModel(PaperSummaryDraft.self, data: data)
         return try draft.digest(source: source, model: signature)
@@ -154,20 +142,11 @@ public actor ResearchClient {
         guard let message = object?["message"] as? [String: Any], let text = message["content"] as? String else {
             throw ResearchError.message("本地模型未返回词语讲解。")
         }
-        do {
-            var result=try JSONDecoder().decode(WordExplanationDraft.self, from: Data(text.utf8))
-            if input.context.isEmpty {result.inContext="未提供原句，无法判断文中具体含义"}
-            return try result.validated()
-        }
-        catch let error as ResearchError { throw error }
-        catch { throw ResearchError.message("讲解格式不完整，本次未保存，可点重试。") }
+        return try WordExplanationDraft.decode(text, input: input)
     }
     private func wordExplanationData(_ input: WordExplanationInput,keepAliveSeconds:Int) async throws -> Data {
-        let properties: [String: Any] = Dictionary(uniqueKeysWithValues: ["meaning", "inContext", "usage"].map {
-            ($0, ["type": "string"] as [String: Any])
-        })
         return try await request("/api/chat", ["model": ResearchModels.analysis, "stream": false, "think": false,
-            "format": ["type": "object", "properties": properties, "required": ["meaning", "inContext", "usage"], "additionalProperties": false],
+            "format": WordExplanationPolicy.schema,
             "messages": [["role": "system", "content": WordExplanationPolicy.prompt], ["role": "user", "content": String(decoding: try JSONEncoder().encode(input), as: UTF8.self)]],
             "options": ["temperature": 0, "num_ctx": 3072, "num_predict": 384], "keep_alive": max(0,min(60,keepAliveSeconds))], timeout: WordExplanationPolicy.timeout)
     }

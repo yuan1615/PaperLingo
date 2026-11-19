@@ -5,6 +5,7 @@ import PaperCore
 struct WordExplanationBatch {
     var pending:[String]
     let total:Int
+    let online:Bool
     var completed=0
     var failed=0
     var skipped=0
@@ -23,7 +24,7 @@ extension AppStore {
     var batchingWordExplanations:Bool {wordExplanationBatch?.isRunning == true}
     func explanation(for word:Vocabulary) -> WordExplanation? {
         guard let value=wordExplanations[word.id],value.isCurrent(for:word) else {return nil}
-        if let digest=engines.modelDigests[ResearchModels.analysis],value.model != ResearchModels.analysis+"@"+digest {return nil}
+        if !analysisOnline,!value.generatedOnline,let digest=engines.modelDigests[ResearchModels.analysis],value.model != ResearchModels.analysis+"@"+digest {return nil}
         return value
     }
     func showWordDetails(_ word:Vocabulary,force:Bool=false) {
@@ -34,11 +35,17 @@ extension AppStore {
         expandedWordID=word.id;wordExplanationError=nil;wordExplanationManuallyPaused=false
         let token=UUID();wordExplanationRequest=token
         wordExplanationMessage=explanation(for:word) == nil ? "等待空闲，准备语境讲解…" : "已保存在本机"
+        let online = analysisOnline
+        if online && !force {
+            if word.kind == "句子" { wordExplanationMessage="整句保留原译文，语境讲解用于单词和短语。" }
+            else { wordExplanationMessage = explanation(for: word) == nil ? "点击「生成讲解」会将词条和附近原句发送给 OpenAI。" : "已保存在本机" }
+            if previous == nil { return }
+        }
         wordExplanationTask=Task { [weak self] in
             // Finish cancellation/unloading before the next word can load a model.
             if let previous {await previous.value}
             guard let self else {return}
-            await self.runWordExplanation(word,token:token,force:force)
+            await self.runWordExplanation(word,token:token,force:force,online:online)
         }
     }
     func toggleWordDetails(_ word:Vocabulary) {
@@ -57,6 +64,9 @@ extension AppStore {
     func pauseWordExplanation() {wordExplanationManuallyPaused=true;cancelWordExplanation()}
     func yieldWordExplanation() async {
         let pending=wordExplanationTask
+        // Remote work does not occupy local model memory. Interrupting it to play audio
+        // could resubmit the same paid request when the batch resumes.
+        if analysisOnline, let pending, !pending.isCancelled { return }
         pending?.cancel()
         if let pending {await pending.value}
         // Foreground work sets its busy flag before yielding. The resumed worker
@@ -66,7 +76,7 @@ extension AppStore {
     func resumeWordExplanationIfNeeded() {
         guard route == .vocabulary,wordExplanationTask == nil,!shuttingDown,!wordExplanationManuallyPaused else {return}
         if batchingWordExplanations {launchWordExplanationBatch();return}
-        guard wordExplanationError == nil,let word=words.first(where:{$0.id == expandedWordID}),word.kind != "句子",explanation(for:word) == nil else {return}
+        guard !analysisOnline,wordExplanationError == nil,let word=words.first(where:{$0.id == expandedWordID}),word.kind != "句子",explanation(for:word) == nil else {return}
         showWordDetails(word)
     }
     func focusVocabulary(_ visible:[Vocabulary]) {
@@ -80,7 +90,7 @@ extension AppStore {
         guard !pending.isEmpty else {return}
         let previous=wordExplanationTask
         previous?.cancel()
-        wordExplanationBatch=WordExplanationBatch(pending:pending,total:pending.count)
+        wordExplanationBatch=WordExplanationBatch(pending:pending,total:pending.count,online:analysisOnline)
         wordExplanationError=nil;wordExplanationManuallyPaused=false
         wordExplanationMessage="尚无有效讲解，可在批量结束后单独生成。"
         launchWordExplanationBatch(after:previous)
@@ -94,7 +104,9 @@ extension AppStore {
         }
     }
     private var otherModelWork:Bool {
-        translating || researchBusy || searching || audio.busy || audio.playing || audio.generating || engines.checking
+        let speechUsesLocalResources = UserDefaults.standard.string(forKey: "speechProvider") != "openai"
+        return (translating && !translationOnline) || (researchBusy && !researchIsCloudText) || searching
+            || (speechUsesLocalResources && (audio.busy || audio.playing || audio.generating)) || engines.checking
     }
     private func waitForWordExplanationSlot(batch:Bool=false) async throws {
         while otherModelWork {
@@ -104,9 +116,9 @@ extension AppStore {
         }
         try Task.checkCancellation()
     }
-    private func saveWordExplanation(_ draft:WordExplanationDraft,word:Vocabulary,context:String) throws {
+    private func saveWordExplanation(_ draft:WordExplanationDraft,word:Vocabulary,context:String,online:Bool) throws {
         guard let db else {throw AppError.message("数据库未打开，讲解未保存。")}
-        let signature=ResearchModels.analysis+"@"+(engines.modelDigests[ResearchModels.analysis] ?? "unknown")
+        let signature = online ? OpenAIClient.analysisSignature : ResearchModels.analysis+"@"+(engines.modelDigests[ResearchModels.analysis] ?? "unknown")
         let value=try WordExplanation(word:word,context:context,model:signature,content:draft)
         try db.saveWordExplanation(value)
         wordExplanations[word.id]=value
@@ -128,15 +140,18 @@ extension AppStore {
         defer {if wordExplanationRequest == token {wordExplanationTask=nil;explainingWordID=nil}}
         var pausedSpeech=false,usedModel=false,prepared=false
         do {
+            try Task.checkCancellation()
+            guard let online=wordExplanationBatch?.online,analysisOnline == online else {throw CancellationError()}
+            let cloud = online ? try onlineClient() : nil
             while let id=wordExplanationBatch?.pending.first {
                 try Task.checkCancellation()
                 guard route == .vocabulary,batchingWordExplanations,wordExplanationRequest == token else {throw CancellationError()}
-                try await waitForWordExplanationSlot(batch:true)
+                if !online {try await waitForWordExplanationSlot(batch:true)}
                 guard let word=words.first(where:{$0.id == id}),word.kind != "句子",explanation(for:word) == nil else {
                     wordExplanationBatch?.pending.removeFirst();wordExplanationBatch?.skipped += 1
                     continue
                 }
-                if !prepared {
+                if !online && !prepared {
                     if !engines.analysisReady {await engines.check()}
                     try Task.checkCancellation()
                     guard engines.analysisReady else {throw AppError.message("请在设置中启动引擎并检查 Qwen3.6 是否已安装，再重新开始批量处理。")}
@@ -151,16 +166,22 @@ extension AppStore {
                     let context=await resolvedWordContext(word)
                     try Task.checkCancellation()
                     let input=try WordExplanationInput(expression:word.text,context:context)
-                    usedModel=true
-                    let draft=try await researchClient.explainWord(input,keepAliveSeconds:60)
+                    let draft:WordExplanationDraft
+                    if let cloud {
+                        draft=try await cloud.explainWord(input)
+                    } else {
+                        usedModel=true
+                        draft=try await researchClient.explainWord(input,keepAliveSeconds:60)
+                    }
                     try Task.checkCancellation()
                     guard batchingWordExplanations,wordExplanationRequest == token else {throw CancellationError()}
-                    try saveWordExplanation(draft,word:word,context:context)
+                    try saveWordExplanation(draft,word:word,context:context,online:online)
                     wordExplanationBatch?.pending.removeFirst();wordExplanationBatch?.completed += 1
                 } catch {
                     if Task.isCancelled || error is CancellationError {throw CancellationError()}
                     wordExplanationBatch?.pending.removeFirst();wordExplanationBatch?.failed += 1
                     wordExplanationBatch?.lastFailure="\(word.text)：\(error.localizedDescription)"
+                    if online {throw error}
                 }
             }
             try Task.checkCancellation()
@@ -178,29 +199,39 @@ extension AppStore {
         }
         await finishWordExplanationSession(usedModel:usedModel,pausedSpeech:pausedSpeech)
     }
-    private func runWordExplanation(_ word:Vocabulary,token:UUID,force:Bool) async {
+    private func runWordExplanation(_ word:Vocabulary,token:UUID,force:Bool,online:Bool) async {
         defer {if wordExplanationRequest == token {wordExplanationTask=nil;explainingWordID=nil}}
-        guard !Task.isCancelled,route == .vocabulary,expandedWordID == word.id else {return}
+        guard !Task.isCancelled,route == .vocabulary,expandedWordID == word.id,analysisOnline == online else {return}
         guard word.kind != "句子" else {wordExplanationMessage="整句保留原译文；语境讲解用于单词和短语。";return}
-        if !force,explanation(for:word) != nil {return}
+        if !force,online || explanation(for:word) != nil {return}
         var pausedSpeech=false,usedModel=false
         do {
-            try await Task.sleep(for:.milliseconds(800))
-            try await waitForWordExplanationSlot()
-            if !engines.analysisReady {await engines.check()}
-            try Task.checkCancellation()
-            guard engines.analysisReady else {throw AppError.message("词语讲解需要本地研究模型，请在设置中启动引擎并检查 Qwen3.6 是否已安装。")}
-            allowEngineRestore=true
-            explainingWordID=word.id;wordExplanationMessage="正在生成简短讲解；首次需要加载模型…"
-            pausedSpeech=await engines.pauseSpeechForResearch(status:"词语讲解期间暂停，完成后恢复")
+            let cloud = online ? try onlineClient() : nil
+            if online {
+                explainingWordID=word.id;wordExplanationMessage="OpenAI 正在生成语境讲解…"
+            } else {
+                try await Task.sleep(for:.milliseconds(800))
+                try await waitForWordExplanationSlot()
+                if !engines.analysisReady {await engines.check()}
+                try Task.checkCancellation()
+                guard engines.analysisReady else {throw AppError.message("词语讲解需要本地研究模型，请在设置中启动引擎并检查 Qwen3.6 是否已安装。")}
+                allowEngineRestore=true
+                explainingWordID=word.id;wordExplanationMessage="正在生成简短讲解；首次需要加载模型…"
+                pausedSpeech=await engines.pauseSpeechForResearch(status:"词语讲解期间暂停，完成后恢复")
+            }
             let context=await resolvedWordContext(word)
             try Task.checkCancellation()
             let input=try WordExplanationInput(expression:word.text,context:context)
-            usedModel=true
-            let draft=try await researchClient.explainWord(input)
+            let draft:WordExplanationDraft
+            if let cloud {
+                draft=try await cloud.explainWord(input)
+            } else {
+                usedModel=true
+                draft=try await researchClient.explainWord(input)
+            }
             try Task.checkCancellation()
             guard route == .vocabulary,expandedWordID == word.id,wordExplanationRequest == token else {throw CancellationError()}
-            try saveWordExplanation(draft,word:word,context:context)
+            try saveWordExplanation(draft,word:word,context:context,online:online)
             wordExplanationMessage="已保存在本机"
         } catch {
             if wordExplanationRequest == token {

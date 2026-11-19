@@ -1,6 +1,8 @@
 import AppKit
 import AVFoundation
+import CryptoKit
 import Foundation
+import NaturalLanguage
 import PaperCore
 import UserNotifications
 
@@ -15,7 +17,7 @@ enum LocalAPI {
         config.connectionProxyDictionary = [:]
         config.timeoutIntervalForRequest = 240
         config.timeoutIntervalForResource = 600
-        return URLSession(configuration: config)
+        return ModelHTTPSession.make(configuration: config)
     }()
     static func request(port: Int, path: String, body: [String: Any]? = nil) async throws -> Data {
         var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)\(path)")!)
@@ -182,6 +184,7 @@ enum LocalAPI {
         try? logHandles.removeValue(forKey:log)?.close();logHandles[log]=handle
         let process = Process(); process.executableURL = url; process.arguments = args
         var environment = ProcessInfo.processInfo.environment
+        environment.removeValue(forKey: "OPENAI_API_KEY")
         environment["HF_HOME"] = workDirectory.appendingPathComponent("huggingface").path
         environment["HF_HUB_OFFLINE"] = "1"
         environment["TRANSFORMERS_OFFLINE"] = "1"
@@ -226,6 +229,7 @@ enum LocalAPI {
 
 @MainActor final class AudioService: NSObject, ObservableObject, AVAudioPlayerDelegate, AVSpeechSynthesizerDelegate {
     var researchBusy=false
+    var onlineClient: () throws -> OpenAIClient = OnlineAccess.client
     var prepareForSpeech:(@MainActor () async -> Void)?
     var referenceVoice:SpeechReferenceVoice?
     var voiceCatalogSignature:String?
@@ -239,20 +243,44 @@ enum LocalAPI {
     @Published var currentPart = 0
     @Published var totalParts = 0
     @Published var generatedParts = 0
-    private struct Clip { let data: Data; let index: Int; let text: String }
+    private struct Clip {
+        let data: Data
+        let index: Int
+        let text: String
+        var playbackRate: Float = 1
+        var onlineCacheKey: NSString? = nil
+    }
+    private struct OnlineSpeech {
+        let client: OpenAIClient
+        let voice: String
+        let parts: [String]
+        let playbackRate: Float
+    }
+    private var onlineSpeech: OnlineSpeech?
+    private let onlineCache = NSCache<NSString, NSData>()
     private var clips: [Clip] = []
     private var player: AVAudioPlayer?
     private let synthesizer = AVSpeechSynthesizer()
     private var utterance: AVSpeechUtterance?
     private var task: Task<Void, Never>?
     private var generation = UUID()
-    override init() { super.init(); synthesizer.delegate = self }
+    override init() {
+        super.init()
+        synthesizer.delegate = self
+        onlineCache.countLimit = 60
+        onlineCache.totalCostLimit = 16 * 1024 * 1024
+    }
     func speak(_ text: String, slow: Bool = false) {
-        guard !researchBusy || UserDefaults.standard.string(forKey:"speechProvider")=="system" else {error="论文整理进行中；可取消整理，或切换系统语音继续试听。";return}
+        let provider = UserDefaults.standard.string(forKey: "speechProvider") ?? "omnivoice"
+        guard !researchBusy || provider == "system" || provider == "openai" else {error="本地模型正在整理论文。可在设置里切换发音服务继续试听。";return}
         stop()
         guard text.count <= 12000 else { error = "选区过长，请分成小于 12,000 字符的段落朗读。"; return }
         let text = SpeechText.prepare(text)
         guard !text.isEmpty else {error="清理引用和排版标记后没有可朗读的正文。";return}
+        if provider == "openai" {
+            beginOnlineSpeech(text, slow: slow)
+            return
+        }
         let token=generation
         if let prepareForSpeech {
             busy=true
@@ -260,12 +288,11 @@ enum LocalAPI {
                 await prepareForSpeech()
                 guard !Task.isCancelled,generation == token else {return}
                 busy=false
-                beginSpeaking(text,slow:slow)
+                beginSpeaking(text,slow:slow,provider:provider)
             }
-        } else {beginSpeaking(text,slow:slow)}
+        } else {beginSpeaking(text,slow:slow,provider:provider)}
     }
-    private func beginSpeaking(_ text:String,slow:Bool) {
-        let provider = UserDefaults.standard.string(forKey: "speechProvider") ?? "omnivoice"
+    private func beginSpeaking(_ text:String,slow:Bool,provider:String) {
         let voice = UserDefaults.standard.string(forKey: "voiceAccent") ?? "american"
         let speed = slow ? 0.75 : 1.0
         if provider == "system" {
@@ -330,6 +357,92 @@ enum LocalAPI {
             }
         }
     }
+    private func beginOnlineSpeech(_ text: String, slow: Bool) {
+        let preference = UserDefaults.standard.string(forKey: "openAIVoice") ?? OpenAIClient.defaultVoice
+        let voice = OpenAIClient.voices.contains(preference) ? preference : OpenAIClient.defaultVoice
+        do {
+            let client = try onlineClient()
+            let parts = Self.onlineSegments(text)
+            guard !parts.isEmpty else { throw AppError.message("没有可朗读的文本。") }
+            onlineSpeech = OnlineSpeech(client: client, voice: voice, parts: parts, playbackRate: slow ? 0.75 : 1)
+            label = "OpenAI · AI 合成语音 · " + voice + (slow ? " · 慢速" : "")
+            totalParts = parts.count
+            generating = true
+            busy = true
+            requestNextOnlineClip()
+        } catch { self.error = error.localizedDescription }
+    }
+
+    // A short first sentence/phrase starts quickly. Group later sentences up to a
+    // bounded size so a paragraph of short sentences needs fewer paid requests.
+    static func onlineSegments(_ text: String) -> [String] {
+        let tokenizer = NLTokenizer(unit: .sentence)
+        tokenizer.string = text
+        tokenizer.setLanguage(.english)
+        let sentenceEnds = tokenizer.tokens(for: text.startIndex..<text.endIndex).map(\.upperBound)
+        var parts: [String] = []
+        var start = text.startIndex
+        while start < text.endIndex {
+            let limit = text.index(start, offsetBy: parts.isEmpty ? 180 : 450, limitedBy: text.endIndex) ?? text.endIndex
+            let boundaries = sentenceEnds.filter { $0 > start && $0 <= limit }
+            var end = (parts.isEmpty ? boundaries.first : boundaries.last) ?? limit
+            if boundaries.isEmpty, limit < text.endIndex {
+                let window = text[start..<limit]
+                if let clause = window.lastIndex(where: { ",;:—".contains($0) }),
+                   text.distance(from: start, to: clause) >= window.count / 3 {
+                    end = text.index(after: clause)
+                } else if let space = window.lastIndex(where: { $0.isWhitespace }), space > start {
+                    end = space
+                }
+            }
+            let part = text[start..<end].trimmingCharacters(in: .whitespacesAndNewlines)
+            if !part.isEmpty { parts.append(part) }
+            start = end
+            while start < text.endIndex, text[start].isWhitespace { start = text.index(after: start) }
+        }
+        return parts
+    }
+
+    // Fetch only one segment ahead of playback. A pause or page change can then
+    // stop the remaining paid requests without resending any completed segment.
+    private func requestNextOnlineClip() {
+        guard let plan = onlineSpeech, task == nil, !paused, clips.isEmpty,
+              generatedParts < plan.parts.count else { return }
+        let index = generatedParts
+        let text = plan.parts[index]
+        let token = generation
+        let identity = [OpenAIClient.speechModel, plan.voice, text].joined(separator: "\u{0}")
+        let cacheKey = Data(SHA256.hash(data: Data(identity.utf8))).base64EncodedString() as NSString
+        task = Task {
+            do {
+                try Task.checkCancellation()
+                guard UserDefaults.standard.string(forKey: "speechProvider") == "openai" else { stop(); return }
+                let data: Data
+                if let cached = onlineCache.object(forKey: cacheKey) {
+                    data = cached as Data
+                } else {
+                    data = try await plan.client.speech(input: text, voice: plan.voice)
+                }
+                guard !Task.isCancelled, generation == token else { return }
+                task = nil
+                generatedParts = index + 1
+                if generatedParts == totalParts { generating = false; onlineSpeech = nil }
+                clips.append(Clip(data: data, index: index + 1, text: text, playbackRate: plan.playbackRate, onlineCacheKey: cacheKey))
+                if player == nil { try playNext() }
+            } catch {
+                guard !Task.isCancelled, generation == token else { return }
+                task = nil
+                onlineSpeech = nil
+                generating = false
+                busy = false
+                self.error = "朗读未完成：\(error.localizedDescription)"
+            }
+        }
+    }
+    func resetOnlineSpeech() {
+        stop()
+        onlineCache.removeAllObjects()
+    }
     private func playNext() throws {
         guard player == nil else { return }
         guard !clips.isEmpty else {
@@ -339,10 +452,15 @@ enum LocalAPI {
         }
         let clip = clips.removeFirst()
         let next = try AVAudioPlayer(data: clip.data)
-        next.delegate = self; next.prepareToPlay(); player = next
+        if clip.playbackRate != 1 { next.enableRate = true; next.rate = clip.playbackRate }
+        next.delegate = self
+        guard next.prepareToPlay() else { throw AppError.message("无法解码生成的音频。") }
+        player = next
         currentText = clip.text; currentPart = clip.index
         busy = false; playing = true
         if !paused && !next.play() { player = nil; playing = false; throw AppError.message("无法播放生成的音频。") }
+        if let key = clip.onlineCacheKey { onlineCache.setObject(clip.data as NSData, forKey: key, cost: clip.data.count) }
+        requestNextOnlineClip()
     }
     func togglePause() {
         guard playing || busy else { return }
@@ -352,10 +470,12 @@ enum LocalAPI {
         } else if utterance != nil {
             if paused { synthesizer.pauseSpeaking(at: .immediate) } else { synthesizer.continueSpeaking() }
         }
+        if !paused { requestNextOnlineClip() }
     }
     func stop() {
-        let previous = generation, cancelServer = generating
+        let previous = generation, cancelServer = generating && onlineSpeech == nil
         generation = UUID(); task?.cancel(); task = nil
+        onlineSpeech = nil
         player?.delegate = nil; player?.stop(); player = nil
         utterance = nil; synthesizer.stopSpeaking(at: .immediate)
         clips.removeAll(); busy = false; playing = false; generating = false; paused = false; error = nil

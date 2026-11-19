@@ -27,9 +27,15 @@ final class WordExplanationTests {
         try db.saveWordExplanation(value)
         XCTAssertEqual(try db.vocabulary()[0],word)
         XCTAssertEqual(try db.wordExplanations()[word.id],value)
+        let online=try WordExplanation(word:word,context:word.context,model:OpenAIClient.analysisSignature,content:draft)
+        try db.saveWordExplanation(online)
+        XCTAssertTrue(online.generatedOnline && online.isCurrent(for:word))
+        XCTAssertEqual(try db.wordExplanations()[word.id],online)
+        XCTAssertTrue(!value.generatedOnline)
         try db.record(text:"robust",translation:"强健的",context:"A robust physical structure.",paper:nil,page:0)
         let changed=try db.vocabulary()[0]
         XCTAssertTrue(!value.isCurrent(for:changed))
+        XCTAssertTrue(!online.isCurrent(for:changed))
         do {try db.saveWordExplanation(value);fail("Stale response overwrote a new context")}catch{}
         try db.deleteWord(word.id);XCTAssertTrue(try db.wordExplanations().isEmpty)
     }

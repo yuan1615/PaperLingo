@@ -201,10 +201,13 @@ extension AppStore {
     }
     func stopLocalEngines() {
         allowEngineRestore = false
-        researchTask?.cancel()
-        pauseWordExplanation()
-        audio.stop()
+        if !researchIsCloudText { researchTask?.cancel() }
+        if !analysisOnline { pauseWordExplanation() }
+        if usesOmniVoice { audio.stop() }
         engines.stop()
+    }
+    var usesOmniVoice: Bool {
+        (UserDefaults.standard.string(forKey: "speechProvider") ?? "omnivoice") == "omnivoice"
     }
     func startResearch(_ targets: [Paper], summarize: Bool = true, refreshText: Bool = false) {
         guard !researchBusy, !searching, !targets.isEmpty else { return }
@@ -213,31 +216,42 @@ extension AppStore {
             researchMessage = "请先生成前三页摘要，再建立摘要索引。"
             return
         }
-        guard !translating else {
+        let online = summarize && analysisOnline
+        guard online || translationOnline || !translating else {
             toast = "当前翻译完成后即可整理论文，避免同时加载多个模型。"
             return
         }
+        researchIsCloudText = online
         researchBusy = true
         researchError = nil
         researchProgress = 0
-        researchMessage = "准备本地模型…"
+        researchMessage = online ? "准备 OpenAI 摘要…" : "准备本地模型…"
         allowEngineRestore = true
-        researchTask = Task { await runResearch(eligible, summarize: summarize, refreshText: refreshText) }
+        researchTask = Task { await runResearch(eligible, summarize: summarize, refreshText: refreshText, online: online) }
     }
-    private func runResearch(_ targets: [Paper], summarize: Bool, refreshText: Bool) async {
+    private func runResearch(_ targets: [Paper], summarize: Bool, refreshText: Bool, online: Bool) async {
         var pausedSpeech = false
         var didPauseAudio = false
+        var localAnalysisUsed = false
+        var localEmbeddingsUsed = false
         do {
-            await yieldWordExplanation()
             try Task.checkCancellation()
-            await engines.check()
-            let ready = summarize ? engines.analysisReady : engines.embeddingReady
-            guard ready else { throw AppError.message("所需研究模型尚未安装，请到设置安装。手工归档、笔记和关键词检索不受影响。") }
-            audio.stop()
-            audio.error = nil
-            audio.researchBusy = true
-            didPauseAudio = true
-            if summarize { pausedSpeech = await engines.pauseSpeechForResearch() }
+            let cloud = online ? try onlineClient() : nil
+            if !online {
+                await yieldWordExplanation()
+                try Task.checkCancellation()
+                await engines.check()
+                try Task.checkCancellation()
+                let ready = summarize ? engines.analysisReady : engines.embeddingReady
+                guard ready else { throw AppError.message("所需研究模型尚未安装，请到设置安装。手工归档、笔记和关键词检索不受影响。") }
+                if usesOmniVoice {
+                    audio.stop()
+                    audio.error = nil
+                }
+                audio.researchBusy = true
+                didPauseAudio = true
+                if summarize { pausedSpeech = await engines.pauseSpeechForResearch() }
+            }
             let modelSignature =
                 ResearchModels.analysis + "@" + (engines.modelDigests[ResearchModels.analysis] ?? "unknown")
             for (number, paper) in targets.enumerated() {
@@ -248,15 +262,29 @@ extension AppStore {
                     let source = try await openingSource(paper, force: refreshText)
                     guard !source.chunks.isEmpty else { throw AppError.message("\(paper.title) 前三页没有可提取的文字，请先 OCR。") }
                     researchMessage = "\(number+1)/\(targets.count) · 生成研究动机、核心方法与实验结果"
-                    let digest = try await researchClient.summarizeOpening(source, signature: modelSignature)
+                    try Task.checkCancellation()
+                    let digest: PaperDigest
+                    if let cloud {
+                        digest = try await cloud.summarizeOpening(source)
+                    } else {
+                        localAnalysisUsed = true
+                        digest = try await researchClient.summarizeOpening(source, signature: modelSignature)
+                    }
                     try Task.checkCancellation()
                     try db?.saveDigest(digest)
                     digests[paper.id] = digest
                     researchProgress = Double(number + 1) / Double(targets.count) * 0.8
                 }
             }
-            await researchClient.unload(ResearchModels.analysis)
-            if engines.embeddingReady {
+            if localAnalysisUsed {
+                try Task.checkCancellation()
+                await researchClient.unload(ResearchModels.analysis)
+                try Task.checkCancellation()
+                localAnalysisUsed = false
+            }
+            let canIndex = engines.embeddingReady && allowEngineRestore
+            if canIndex {
+                researchIsCloudText = false
                 let signature = embeddingSignature
                 for (number, paper) in targets.enumerated() {
                     try Task.checkCancellation()
@@ -267,7 +295,9 @@ extension AppStore {
                         try Task.checkCancellation()
                         let batch = Array(pending[offset..<min(offset + 8, pending.count)])
                         researchMessage = "\(number+1)/\(targets.count) · 建立中文摘要向量（每篇一个）"
+                        localEmbeddingsUsed = true
                         let vectors = try await researchClient.embeddings(batch.map(\.embeddingInput))
+                        try Task.checkCancellation()
                         var updates: [ResearchPassage] = []
                         for (chunk, vector) in zip(batch, vectors) {
                             var item = chunk
@@ -286,6 +316,9 @@ extension AppStore {
             try reload()
             researchProgress = 1
             researchMessage = "已完成 \(targets.count) 篇\(summarize ? "论文整理" : "检索索引")"
+            if summarize && !canIndex {
+                researchMessage += "。可用关键词检索，启动本地检索模型后可建立语义索引。"
+            }
         } catch is CancellationError { researchMessage = "已取消；已完成的摘要保留，未完成项沿用原摘要" } catch {
             if Task.isCancelled {
                 researchMessage = "已取消；已完成内容保留"
@@ -295,18 +328,19 @@ extension AppStore {
             }
         }
         let client = researchClient
-        await Task.detached {
-            await client.unload(ResearchModels.analysis)
-            await client.unload(ResearchModels.embedding)
-        }.value
+        if localAnalysisUsed { await Task.detached { await client.unload(ResearchModels.analysis) }.value }
+        if localEmbeddingsUsed { await Task.detached { await client.unload(ResearchModels.embedding) }.value }
         if didPauseAudio {
             audio.researchBusy = false
-            audio.error = nil
         }
+        researchIsCloudText = false
         researchBusy = false
         researchPaperID = nil
         researchTask = nil
-        if !shuttingDown && allowEngineRestore { refreshLibrarySearch() }
+        if !shuttingDown {
+            if allowEngineRestore { refreshLibrarySearch() }
+            else if online { searchKeywords() }
+        }
         if route != .library {
             toast = researchError == nil ? researchMessage : "论文整理未完成，返回研究库查看原因"
         }

@@ -4,6 +4,13 @@ Notable changes are recorded here. Version numbers follow `MAJOR.MINOR.PATCH`; v
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-19
+
+- Choose local models or OpenAI independently for reading translation, paper summaries and vocabulary explanations, and speech. Local processing remains the default.
+- Keep the API key in a non-synchronizing macOS Keychain item. Use fixed official endpoints, ephemeral sessions, sanitized errors and Responses requests with `store: false`.
+- Generate online explanations on demand, preserve previous summaries and explanations on failure, and stop a paid batch on its first error. Search and embeddings continue to use locally stored Chinese summaries.
+- Play OpenAI built-in voices in bounded segments with a short first segment, cancellation and an in-memory audio cache. Personal OmniVoice references are only used for local synthesis.
+
 ## [0.2.9] - 2026-11-12
 
 ### Fixed
@@ -190,7 +197,8 @@ Validation scope and limitations are documented in [v0.2.1 verification](docs/VE
 - Model accuracy and gap-free speech playback are not guaranteed.
 - Offline app builds use ad-hoc signing by default and are not Apple-notarized.
 
-[Unreleased]: https://github.com/yuan1615/PaperLingo/compare/v0.2.9...HEAD
+[Unreleased]: https://github.com/yuan1615/PaperLingo/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/yuan1615/PaperLingo/releases/tag/v0.3.0
 [0.2.9]: https://github.com/yuan1615/PaperLingo/releases/tag/v0.2.9
 [0.2.8]: https://github.com/yuan1615/PaperLingo/releases/tag/v0.2.8
 [0.2.7]: https://github.com/yuan1615/PaperLingo/releases/tag/v0.2.7

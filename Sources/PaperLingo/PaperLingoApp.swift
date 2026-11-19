@@ -56,7 +56,10 @@ final class AppDelegate:NSObject,NSApplicationDelegate,UNUserNotificationCenterD
                 .task {
                     delegate.store=store
                     if let listening=AppDelegate.pendingListening {AppDelegate.pendingListening=nil;store.openReview(listening:listening)}
-                    await store.engines.start();await store.reminders.schedule(store.words)
+                    if store.engines.bundled || FileManager.default.isExecutableFile(atPath: store.engines.runtime.appendingPathComponent("bin/ollama").path) {
+                        await store.engines.start()
+                    }
+                    await store.reminders.schedule(store.words)
                 }
                 .onReceive(NotificationCenter.default.publisher(for:NSApplication.didBecomeActiveNotification)) { _ in
                     Task { try? store.reload(); await store.reminders.schedule(store.words) }

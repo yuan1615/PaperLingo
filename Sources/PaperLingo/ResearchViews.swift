@@ -123,8 +123,10 @@ struct ResearchLibraryScreen: View {
                 Button("导入 PDF…") { store.choosePDF() }
                 Button("导入链接…") { store.showLink = true }
                 Divider()
-                Button("生成缺失的前三页摘要") { store.startResearch(store.papers.filter { !PaperSummary.isCurrent(store.digests[$0.id]) }) }
-                    .disabled(store.researchBusy || store.searching)
+                let pending = store.papers.filter { !PaperSummary.isCurrent(store.digests[$0.id]) }
+                Button("\(store.analysisOnline ? "用 OpenAI 生成" : "生成")缺失的前三页摘要（\(pending.count) 篇）") {
+                    store.startResearch(pending)
+                }.disabled(pending.isEmpty || store.researchBusy || store.searching)
                 Button("更新摘要检索索引") { store.startResearch(store.papers, summarize: false) }.disabled(store.researchBusy || store.searching)
             } label: { Image(systemName: "plus").frame(width: 28, height: 32).contentShape(Rectangle()) }
                 .menuStyle(.borderlessButton).fixedSize().help("导入与批量整理").accessibilityLabel("导入与整理")
@@ -267,7 +269,7 @@ struct ResearchCompactStatus: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 ProgressView().controlSize(.small)
-                Text("本机论文整理").font(.system(size: 12, weight: .medium))
+                Text("论文整理").font(.system(size: 12, weight: .medium))
                 Spacer()
                 Button {
                     store.route = .library
@@ -479,7 +481,9 @@ struct ResearchPaperDetail: View {
             }.font(.system(size: 11)).foregroundStyle(Palette.muted)
         } else {
             Text("用三页，留住论文的主要思路。").font(.system(size: 20, design: .serif))
-            Text("本地模型只阅读 PDF 前三页，按研究动机、核心方法、实验结果生成中文摘要，再用摘要建立每篇唯一的语义索引。网页使用开头的有限正文。没有报告的结果会明确写出。").font(.system(size: 12)).lineSpacing(6).foregroundStyle(Palette.muted)
+            Text(store.analysisOnline
+                ? "生成时会将 PDF 前三页的文字或网页开头发送给 OpenAI，按研究动机、核心方法和实验结果生成中文摘要。摘要保存在本机，可用本地检索模型建立语义索引。"
+                : "本地模型只阅读 PDF 前三页或网页开头，按研究动机、核心方法、实验结果生成中文摘要，再用摘要建立每篇唯一的语义索引。").font(.system(size: 12)).lineSpacing(6).foregroundStyle(Palette.muted)
             analyzeButton
         }
     }
@@ -681,11 +685,11 @@ struct ResearchModelSettings: View {
     @ObservedObject var engines: EngineManager
     var body: some View {
         VStack(alignment: .leading, spacing: 15) {
-            Label("前三页摘要与检索 · v0.2.3", systemImage: "books.vertical").font(.system(size: 14, weight: .semibold))
+            Label("本地摘要与检索模型", systemImage: "books.vertical").font(.system(size: 14, weight: .semibold))
             row("整理 · Qwen3.6 27B Q4", status: engines.analysisStatus, ready: engines.analysisReady)
             row("检索 · Qwen3 Embedding 0.6B", status: engines.embeddingStatus, ready: engines.embeddingReady)
             row("相关性复核 · Qwen3 Reranker 0.6B",status:engines.rerankerReady ? "已就绪 · 本机重排":"尚未就绪；需安装模型并重启本地引擎",ready:engines.rerankerReady)
-            Text("针对 M2 Pro / 32 GB：研究与重排模型共约 19.3 GB。大模型整理时暂停本应用的语音与重排服务，完成或取消后恢复；可继续阅读、写笔记和关键词检索。").font(.system(size: 11))
+            Text("本地研究与重排模型共约 19.3 GB。本地大模型整理时会暂停语音与重排服务，完成或取消后恢复。在线摘要可独立使用。").font(.system(size: 11))
                 .foregroundStyle(Palette.muted).lineSpacing(5)
             HStack {
                 if !engines.bundled {
@@ -708,7 +712,7 @@ struct ResearchModelSettings: View {
                     }
                 }
             }
-            Text("Qwen 模型为 Apache-2.0；OmniVoice 与 TranslateGemma 继续使用各自的许可。研究内容仅发给本机回环服务。").font(.system(size: 10))
+            Text("Qwen 模型使用 Apache-2.0 许可。语义检索与相关性复核始终在本机运行。").font(.system(size: 10))
                 .foregroundStyle(Palette.muted)
         }.padding(24).frame(maxWidth: .infinity, alignment: .leading).background(
             .white.opacity(0.7), in: RoundedRectangle(cornerRadius: 13)

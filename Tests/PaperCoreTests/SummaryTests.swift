@@ -19,6 +19,17 @@ final class SummaryTests {
         }
         XCTAssertEqual(read, [0, 1, 2]); XCTAssertEqual(opening.status.totalPages, 200)
         XCTAssertEqual(opening.chunks.map(\.page), [1, 2])
+        let payload = try JSONDecoder().decode([[String: String]].self, from: Data(opening.modelInput().utf8))
+        XCTAssertEqual(payload, [["page": "2", "text": "Introduction page 1."], ["page": "3", "text": "Introduction page 2."]])
+        var stale = opening
+        stale.chunks[0].page = 3
+        do { _ = try stale.modelInput(); fail("Accepted a cached page outside the cloud summary scope") } catch {}
+        stale = opening
+        stale.chunks[0].paperID = "other"
+        do { _ = try stale.modelInput(); fail("Accepted a cached page from a different paper") } catch {}
+        stale = opening
+        stale.chunks[0].text = String(repeating: "a", count: 42000)
+        do { _ = try stale.modelInput(); fail("Sent an oversized source") } catch {}
         read = []
         _ = try PaperSummarySource.firstPages(paperID: "p", totalPages: 1) { page in read.append(page); return "Short paper." }
         XCTAssertEqual(read, [0])

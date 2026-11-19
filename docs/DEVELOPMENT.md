@@ -248,3 +248,15 @@ python3 scripts/check-reference-voices.py --port 8766 --catalog .runtime/voice-p
 核心检查使用正文、数字引用、数学条件、缩写、连字、表情及跨行选区样例；原生检查使用独立身份与合成资料，覆盖原句恢复、共享播放路径、页面往返、模式、揭晓/完成状态、删除词条与声音偏好迁移。模型和分段语音协议保持不变，既有 Python 回归仍需通过。
 
 2026-11-12 验收：47 项核心、55 项复习原生、60 项生词本/调度/音色原生检查，以及 33 项 Python 引擎回归均通过；已查看 860 × 620 练习页布局与固定声音设置。缩写样例包括 CoT、LoRA、RoPE 和 VAE，并保留条件、独立缩写与数学语境。测试使用合成文本、独立数据库和系统语音，不把协议检查当作真实音质评价；本次不新增模型或重打完整 DMG。
+
+## v0.3.0 在线服务验证
+
+文本与朗读的请求格式、错误脱敏、重定向和取消由 `PaperCoreChecks` 覆盖。下列原生检查复用独立 bundle ID 和临时数据库。测试拦截在线请求，直接操作 macOS 钥匙串的检查只创建并清理该测试 App 的临时凭据。
+
+```bash
+PAPERLINGO_UI_CHECK_SOURCE=Tests/PaperLingoUITests/OnlineAccessChecks.swift bash scripts/check-review-ui.sh
+PAPERLINGO_UI_CHECK_SOURCE=Tests/PaperLingoUITests/OnlineResearchChecks.swift bash scripts/check-review-ui.sh
+PAPERLINGO_UI_CHECK_SOURCE=Tests/PaperLingoUITests/OnlineSpeechChecks.swift bash scripts/check-review-ui.sh
+```
+
+实际项目的鉴权、模型权限和账单由使用者配置自己的密钥后验证。仓库和测试不需要真实 API Key。

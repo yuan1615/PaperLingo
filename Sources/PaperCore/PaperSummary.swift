@@ -9,6 +9,22 @@ public struct PaperSummarySource: Sendable {
     public static let pageLimit = 3
     public static let webCharacterLimit = 15000
 
+    /// The only paper data sent to a summary model. IDs, paths and notes stay on the Mac.
+    public func modelInput() throws -> String {
+        guard !chunks.isEmpty, status.extractionVersion == PaperSummary.version,
+              chunks.count <= Self.pageLimit, chunks.allSatisfy({
+                  (0..<Self.pageLimit).contains($0.page) && $0.paperID == status.paperID
+              }) else {
+            throw ResearchError.message("只能整理前三页的有效文字，请检查论文文字层。")
+        }
+        let pages = chunks.map { ["page": String($0.page + 1), "text": $0.text] }
+        let data = try JSONSerialization.data(withJSONObject: pages)
+        guard data.count < 42000 else {
+            throw ResearchError.message("前三页文字超出摘要输入上限，请检查 PDF 文字层。")
+        }
+        return String(decoding: data, as: UTF8.self)
+    }
+
     public static func pdf(paperID: String, url: URL) throws -> Self {
         guard let document = PDFDocument(url: url), document.pageCount > 0 else {
             throw ResearchError.message("无法读取 PDF 文件。")
@@ -54,6 +70,13 @@ public enum PaperSummary {
     public static let version = "first-three-pages-summary-v1"
     public static let indexVersion = "chinese-summary-only-v1"
     public static let topics: [DigestTopic] = [.problem, .method, .results]
+    static var schema: [String: Any] {
+        let string = ["type": "string"]
+        return ["type": "object", "properties": [
+            "oneLine": string, "motivation": string, "method": string, "results": string, "category": string,
+            "tags": ["type": "array", "items": string, "maxItems": 5]],
+            "required": ["oneLine", "motivation", "method", "results", "category", "tags"], "additionalProperties": false]
+    }
     public static func title(_ topic: DigestTopic) -> String {
         switch topic {
         case .problem: return "研究动机"

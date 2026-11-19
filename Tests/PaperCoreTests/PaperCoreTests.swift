@@ -306,7 +306,7 @@ extension PaperCoreTests {
 }
 
 @main struct PaperCoreChecksRunner {
-static func main() {
+static func main() async {
 let suite=PaperCoreTests()
 let evidenceSuite=EvidenceTests()
 let summarySuite=SummaryTests()
@@ -368,7 +368,20 @@ for (name,run) in checks {
     do {try run()} catch {fail("\(name): \(error.localizedDescription)")}
     print("\(failures==before ? "PASS" : "FAIL") \(name)")
 }
-print("\(checks.count) checks, \(failures) failures")
+let online = OpenAIClientTests()
+let onlineChecks: [(String, () async throws -> Void)] = [
+    ("Online text request policy and structured results", online.testTextPolicyAndStructuredResponses),
+    ("Online speech format and input boundaries", online.testSpeechDataBoundaryAndInputGuards),
+    ("Online errors, redaction and redirect refusal", online.testErrorsAndRedirects),
+    ("Local model requests refuse off-device redirects", online.testLocalModelRedirectIsRefused),
+    ("Online in-flight request cancellation", online.testCancellationStopsInFlightRequest)
+]
+for (name, run) in onlineChecks {
+    let before = failures
+    do { try await run() } catch { fail("\(name): \(error.localizedDescription)") }
+    print("\(failures == before ? "PASS" : "FAIL") \(name)")
+}
+print("\(checks.count + onlineChecks.count) checks, \(failures) failures")
 if failures>0 {exit(1)}
 }
 }

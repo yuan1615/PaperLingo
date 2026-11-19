@@ -128,7 +128,7 @@ private struct SelectionActionPopover: View {
             HStack(spacing: 8) {
                 Button { Task { await store.translate() } } label: {
                     Label(store.translating ? "翻译中…" : "翻译", systemImage: "character.bubble")
-                }.disabled(store.translating || store.researchBusy || store.selection.count > 4000)
+                }.disabled(store.translating || store.translationBlocked || store.selection.count > 4000)
                 Button { store.audio.speak(store.selection) } label: { Label("朗读", systemImage: "speaker.wave.2") }
                 Menu {
                     Button("慢速朗读") { store.audio.speak(store.selection, slow: true) }
@@ -136,7 +136,7 @@ private struct SelectionActionPopover: View {
                         let sentence = store.context
                         store.updateSelection(sentence, context: sentence, page: store.selectedPage)
                         Task { await store.translate() }
-                    }.disabled(store.context.isEmpty || store.context == store.selection || store.context.count > 4000 || store.translating || store.researchBusy)
+                    }.disabled(store.context.isEmpty || store.context == store.selection || store.context.count > 4000 || store.translating || store.translationBlocked)
                     Divider()
                     Button("保存选区到笔记") {
                         dismiss()
@@ -150,7 +150,7 @@ private struct SelectionActionPopover: View {
                 Spacer(minLength: 0)
             }.buttonStyle(.bordered).controlSize(.regular).font(.system(size: 12))
             if store.translating {
-                HStack(spacing: 8) { ProgressView().controlSize(.small); Text("正在本机翻译").font(.system(size: 11)) }
+                HStack(spacing: 8) { ProgressView().controlSize(.small); Text(store.translationOnline ? "正在使用 OpenAI 翻译" : "正在本机翻译").font(.system(size: 11)) }
             } else if !store.translation.isEmpty {
                 Divider()
                 Text("中文译文").font(.system(size: 11, weight: .semibold)).foregroundStyle(Palette.muted)
@@ -160,8 +160,8 @@ private struct SelectionActionPopover: View {
                 } else {
                     Button("加入复习") { store.saveSentence() }.buttonStyle(.bordered).font(.system(size: 11))
                 }
-            } else if store.researchBusy || store.selection.count > 4000 {
-                Text(store.researchBusy ? "论文摘要完成后可翻译；系统语音仍可使用。" : "一次最多翻译 4,000 字符，请缩小选区。")
+            } else if store.translationBlocked || store.selection.count > 4000 {
+                Text(store.translationBlocked ? "本地论文任务完成后即可翻译。" : "一次最多翻译 4,000 字符，请缩小选区。")
                     .font(.system(size: 10)).foregroundStyle(Palette.muted)
             }
             Text("原文与译文可滚动查看 · 滚动正文时保留 · Esc 收起")

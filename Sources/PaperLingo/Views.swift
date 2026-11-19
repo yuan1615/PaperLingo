@@ -172,12 +172,12 @@ struct WelcomeScreen:View {
                 }.padding(.bottom,44)
                 HStack(alignment:.top,spacing:16) {
                     feature("01","自由阅读","保留论文原版式，\n选一个词，也可以选一整句。","text.cursor")
-                    feature("02","即时理解","本地翻译与自然发音，\n让上下文帮助你理解。","waveform")
+                    feature("02","即时理解","选区翻译与自然发音，\n让上下文帮助你理解。","waveform")
                     feature("03","让记忆发生","反复查阅的表达，\n会出现在下一次复习中。","sun.horizon")
                 }.padding(.bottom,36)
                 HStack { Image(systemName:"leaf").foregroundStyle(Palette.green); Text("论文、词库和学习记录保存在你的 Mac。").font(.system(size:11)).foregroundStyle(Palette.muted); Spacer(); Button("先试读一段 →") { store.loadExample() }.buttonStyle(ReadingButtonStyle()).font(.system(size:12,weight:.medium)).foregroundStyle(Palette.green) }
                 Divider().padding(.vertical,25)
-                HStack(spacing:8) { Image(systemName:"cpu"); Text(store.engines.bundled ? "本离线版已包含模型，可到「设置」查看引擎连接状态。" : "首次使用：到「设置」安装并启动本地模型，随后可离线翻译与朗读。").font(.system(size:11)) }.foregroundStyle(Palette.muted)
+                HStack(spacing:8) { Image(systemName:"cpu"); Text("可在「设置」分别选择翻译、摘要和朗读使用的模型服务。").font(.system(size:11)) }.foregroundStyle(Palette.muted)
             }.frame(maxWidth:850,alignment:.leading).padding(60).frame(maxWidth:.infinity,alignment:.center)
         }
     }
@@ -294,7 +294,7 @@ struct LearningPanel:View {
                         }.font(.system(size:11)).buttonStyle(ReadingButtonStyle()).foregroundStyle(Palette.green)
                     }
                     Button {Task {await store.translate()}} label:{
-                        HStack { if store.translating {ProgressView().controlSize(.small).tint(.white)} else {Image(systemName:"character.bubble")} ; Text(store.translating ? "正在本地翻译…" : "翻译选区"); Spacer(); Text("⌘D").font(.system(size:10)) }
+                        HStack { if store.translating {ProgressView().controlSize(.small).tint(.white)} else {Image(systemName:"character.bubble")} ; Text(store.translating ? (store.translationOnline ? "正在使用 OpenAI 翻译…" : "正在本地翻译…") : "翻译选区"); Spacer(); Text("⌘D").font(.system(size:10)) }
                     }.buttonStyle(PrimaryButton()).disabled(store.translating)
                     if !store.translation.isEmpty {
                         VStack(alignment:.leading,spacing:13) {
@@ -382,7 +382,7 @@ struct VocabularyBatchControls:View {
                     ProgressView(value:Double(batch.processed),total:Double(max(1,batch.total))).tint(Palette.green)
                 } else {
                     Text("批量补全语境讲解").font(.system(size:12,weight:.medium))
-                    Text("全部生词本中有 \(pending) 个单词或短语待处理，已生成的会自动跳过。")
+                    Text(store.analysisOnline ? "点击后将依次发送 \(pending) 个待处理词条及原句片段给 OpenAI，按 API 用量计费。" : "全部生词本中有 \(pending) 个单词或短语待处理，已生成的会自动跳过。")
                         .font(.system(size:10)).foregroundStyle(Palette.muted)
                 }
             }.frame(maxWidth:.infinity,alignment:.leading)
@@ -441,7 +441,7 @@ struct WordExplanationPanel:View {
             }
             if let cached {
                 WordExplanationContent(content:cached.content)
-                Text(cached.contextIsExcerpt ? "本地生成 · 依据选词附近片段" : "本地生成 · 已保存在本机").font(.system(size:10)).foregroundStyle(Palette.muted)
+                Text((cached.generatedOnline ? "OpenAI 生成" : "本地生成") + (cached.contextIsExcerpt ? " · 依据选词附近片段" : " · 已保存在本机")).font(.system(size:10)).foregroundStyle(Palette.muted)
             }
             if let error=store.wordExplanationError {
                 Text(error).font(.system(size:11)).foregroundStyle(Palette.orange).fixedSize(horizontal:false,vertical:true)
@@ -632,6 +632,7 @@ struct SettingsScreen:View {
     @ObservedObject var engines:EngineManager
     @AppStorage("speechProvider") private var speechProvider="omnivoice"
     @AppStorage("voiceAccent") private var voice="american"
+    @AppStorage("openAIVoice") private var onlineVoice=OpenAIClient.defaultVoice
     @AppStorage("translationModel") private var model="translategemma:4b"
     @AppStorage("remindersEnabled") private var reminders=false
     @AppStorage("reminderHour") private var hour=20
@@ -640,7 +641,8 @@ struct SettingsScreen:View {
     var body:some View {
         ScrollView {
             VStack(alignment:.leading,spacing:24) {
-                ScreenHeading(eyebrow:"MADE TO STAY ON YOUR MAC",title:"安静地学习，安心地保存在本地。",subtitle:"设置本地模型、发音方式和每天的学习节奏。")
+                Text("设置").font(.system(size:25,weight:.medium,design:.serif))
+                modelServices
                 settingsCard("本地模型",icon:"cpu") {
                     statusRow("翻译 · Ollama",detail:engines.translationStatus,ready:engines.translationReady)
                     Divider()
@@ -660,54 +662,82 @@ struct SettingsScreen:View {
                     Text(engines.bundled ? "本版本已携带 Python、OmniVoice 和 TranslateGemma，无需下载。首次朗读会加载模型；日志和音频缓存保存在当前用户的数据目录。" : "首次使用需安装本地模型，下载中断后可继续安装。应用只会停止自己启动的引擎进程。").font(.system(size:11)).foregroundStyle(Palette.muted).lineSpacing(6)
                     if !engines.bundled {DownloadStatus(runtime:engines.runtime)}
                 }
-                settingsCard("翻译与发音",icon:"waveform") {
-                    HStack {Text("翻译模型").font(.system(size:12));Spacer();TextField("translategemma:4b",text:$model).textFieldStyle(.roundedBorder).frame(width:230)}
-                    HStack {Text("发音引擎").font(.system(size:12));Spacer();Picker("发音引擎",selection:$speechProvider){Text("OmniVoice · 本地模型").tag("omnivoice");Text("macOS 系统语音 · 临时试听").tag("system")}.labelsHidden().frame(width:230)}
-                    if speechProvider == "omnivoice",let selected=engines.referenceVoice,let catalog=engines.voiceCatalog {
-                        HStack {
-                            Text("发音人").font(.system(size:12));Spacer()
-                            Picker("发音人",selection:Binding(get:{engines.referenceVoice?.id ?? selected.id},set:{store.selectReferenceVoice(id:$0)})) {
-                                ForEach(catalog.voices){Text($0.label).tag($0.id)}
-                            }.labelsHidden().frame(width:230).accessibilityIdentifier("settings.referenceVoice")
-                        }
-                        Text("已固定使用当前声音，退出或重启后也会保留。可从 \(catalog.voices.count) 条素材中手动切换并试听；切换会停止当前朗读，下次播放使用新声音。素材编号不代表已确认的口音或性别。")
-                            .font(.system(size:11)).foregroundStyle(Palette.muted).fixedSize(horizontal:false,vertical:true)
-                    } else {
-                        HStack {Text("英语口音").font(.system(size:12));Spacer();Picker("英语口音",selection:$voice){Text("美式英语").tag("american");Text("英式英语").tag("british")}.labelsHidden().frame(width:230)}
-                    }
-                    Button("试听一句英文"){store.audio.speak("A little reading, a little growth. Every day is a chance to learn something new.")}.buttonStyle(.bordered).font(.system(size:11))
-                }
                 ResearchModelSettings(engines:engines)
-                settingsCard("每日复习提醒",icon:"bell") {
-                    HStack {
-                        VStack(alignment:.leading,spacing:6) {Text("每天 10 分钟").font(.system(size:13,weight:.medium));Text("北京时间；点击系统通知进入练习。通知不自动播放声音材料。").font(.system(size:11)).foregroundStyle(Palette.muted)}
-                        Spacer()
-                        Toggle("启用提醒",isOn:Binding(get:{reminders},set:{value in
-                            if value {Task {do {let granted=try await store.reminders.enable(words:store.words);reminderMessage=granted ? "已安排未来 30 天的个性化提醒；每次打开应用会更新。" : "通知尚未获准。请在系统设置 → 通知 → PaperLingo 中开启。"}catch{reminderMessage=error.localizedDescription}}}
-                            else {store.reminders.disable();reminderMessage="已关闭系统提醒，应用内仍可复习。"}
-                        })).labelsHidden().toggleStyle(.switch)
-                    }
-                    HStack {
-                        Text("提醒时间").font(.system(size:12));Spacer()
-                        Picker("时",selection:$hour){ForEach(0..<24){Text(String(format:"%02d",$0)).tag($0)}}.labelsHidden().frame(width:75)
-                        Text(":")
-                        Picker("分",selection:$minute){ForEach(0..<60){Text(String(format:"%02d",$0)).tag($0)}}.labelsHidden().frame(width:75)
-                        Text("Asia/Shanghai").font(.system(size:10,design:.monospaced)).foregroundStyle(Palette.muted)
-                    }
-                    if !reminderMessage.isEmpty {Text(reminderMessage).font(.system(size:11)).foregroundStyle(Palette.green)}
-                    Button("打开 macOS 通知设置"){if let url=URL(string:"x-apple.systempreferences:com.apple.Notifications-Settings.extension"){NSWorkspace.shared.open(url)}}.buttonStyle(.bordered).font(.system(size:11))
-                    Button("发送测试提醒"){Task{do{try await store.reminders.test();reminderMessage="测试提醒已提交给 macOS，将在 3 秒后显示。"}catch{reminderMessage=error.localizedDescription}}}.buttonStyle(.bordered).font(.system(size:11))
-                    Text("系统权限需在这台 Mac 上授权。通知提前安排 30 天，内容随每次学习更新；超过一个月未打开应用需重新打开更新。").font(.system(size:10)).foregroundStyle(Palette.muted).lineSpacing(4)
-                }
-                settingsCard("你的资料",icon:"externaldrive") {
-                    Text("论文副本、词库、查询与复习日志均保存在本机。").font(.system(size:12))
-                    Text(store.dataURL.path).font(.system(size:10,design:.monospaced)).foregroundStyle(Palette.muted).textSelection(.enabled)
-                    HStack {Button("打开数据目录"){NSWorkspace.shared.open(store.dataURL)};Button("导出词库、档案与笔记…"){store.exportBackup()}}.buttonStyle(.bordered).font(.system(size:11))
-                    Text("JSON 包含词条、论文档案、个人笔记与最新摘要，不含 PDF、完整日志或检索向量；完整备份请退出应用后复制整个数据目录。目前不支持 JSON 导入。").font(.system(size:10)).foregroundStyle(Palette.muted)
-                }
-                HStack {Text("PaperLingo \(Bundle.main.object(forInfoDictionaryKey:"CFBundleShortVersionString") as? String ?? "开发版") · macOS 原生应用");Spacer();Text("Keep reading. Keep growing.").font(.system(size:11,design:.serif))}.font(.system(size:10)).foregroundStyle(Palette.muted).padding(.bottom,10)
+                remindersAndData
+                HStack {Text("PaperLingo \(Bundle.main.object(forInfoDictionaryKey:"CFBundleShortVersionString") as? String ?? "开发版") · macOS 原生应用");Spacer()}.font(.system(size:10)).foregroundStyle(Palette.muted).padding(.bottom,10)
             }.padding(32).frame(maxWidth:980).frame(maxWidth:.infinity)
-        }.task{await engines.check()}.onChange(of:hour){Task{await store.reminders.schedule(store.words)}}.onChange(of:minute){Task{await store.reminders.schedule(store.words)}}.onChange(of:speechProvider){store.audio.stop()}
+        }.task{await engines.check()}.onChange(of:hour){Task{await store.reminders.schedule(store.words)}}.onChange(of:minute){Task{await store.reminders.schedule(store.words)}}
+    }
+    private var modelServices: some View {
+        settingsCard("模型服务",icon:"slider.horizontal.3") {
+            providerPicker("选区翻译", local:"TranslateGemma", selection:$store.translationOnline)
+            providerPicker("论文摘要与生词讲解", local:"Qwen", selection:$store.analysisOnline)
+            if !store.translationOnline {
+                HStack {Text("本地翻译模型").font(.system(size:12));Spacer();TextField("translategemma:4b",text:$model).textFieldStyle(.roundedBorder).frame(width:230)}
+            }
+            HStack {Text("朗读").font(.system(size:12));Spacer();Picker("发音引擎",selection:Binding(get:{speechProvider},set:{store.audio.stop();speechProvider=$0})){Text("OmniVoice · 本地模型").tag("omnivoice");Text("macOS 系统语音").tag("system");Text("OpenAI · " + OpenAIClient.speechModel).tag("openai")}.labelsHidden().frame(width:230)}
+            if speechProvider == "omnivoice",let selected=engines.referenceVoice,let catalog=engines.voiceCatalog {
+                HStack {
+                    Text("发音人").font(.system(size:12));Spacer()
+                    Picker("发音人",selection:Binding(get:{engines.referenceVoice?.id ?? selected.id},set:{store.selectReferenceVoice(id:$0)})) {
+                        ForEach(catalog.voices){Text($0.label).tag($0.id)}
+                    }.labelsHidden().frame(width:230).accessibilityIdentifier("settings.referenceVoice")
+                }
+                Text("已固定使用当前声音，退出或重启后也会保留。可从 \(catalog.voices.count) 条素材中手动切换并试听；切换会停止当前朗读，下次播放使用新声音。素材编号不代表已确认的口音或性别。")
+                    .font(.system(size:11)).foregroundStyle(Palette.muted).fixedSize(horizontal:false,vertical:true)
+            } else if speechProvider == "openai" {
+                HStack {
+                    Text("在线音色"); Spacer()
+                    Picker("在线音色",selection:Binding(get:{onlineVoice},set:{store.audio.stop();onlineVoice=$0})) {
+                        ForEach(OpenAIClient.voices,id:\.self) { Text($0.capitalized).tag($0) }
+                    }.labelsHidden().frame(width:230)
+                }.font(.system(size:12))
+                Text("OpenAI 使用内置 AI 合成音色。你的 OmniVoice 参考录音和转写只供本地使用。").font(.system(size:11)).foregroundStyle(Palette.muted)
+            } else {
+                HStack {Text("英语口音").font(.system(size:12));Spacer();Picker("英语口音",selection:$voice){Text("美式英语").tag("american");Text("英式英语").tag("british")}.labelsHidden().frame(width:230)}
+            }
+            Button("试听一句英文"){store.audio.speak("A little reading, a little growth. Every day is a chance to learn something new.")}.buttonStyle(.bordered).font(.system(size:11))
+            Divider()
+            OnlineKeySettings(store:store)
+        }
+    }
+    private func providerPicker(_ title:String, local:String, selection:Binding<Bool>) -> some View {
+        HStack {
+            Text(title); Spacer()
+            Picker(title, selection:selection) {
+                Text(local + " · 本地").tag(false)
+                Text("OpenAI · " + OpenAIClient.textModel).tag(true)
+            }.labelsHidden().frame(width:230)
+        }.font(.system(size:12))
+    }
+    @ViewBuilder private var remindersAndData: some View {
+        settingsCard("每日复习提醒",icon:"bell") {
+            HStack {
+                VStack(alignment:.leading,spacing:6) {Text("每天 10 分钟").font(.system(size:13,weight:.medium));Text("北京时间；点击系统通知进入练习。通知不自动播放声音材料。").font(.system(size:11)).foregroundStyle(Palette.muted)}
+                Spacer()
+                Toggle("启用提醒",isOn:Binding(get:{reminders},set:{value in
+                    if value {Task {do {let granted=try await store.reminders.enable(words:store.words);reminderMessage=granted ? "已安排未来 30 天的个性化提醒；每次打开应用会更新。" : "通知尚未获准。请在系统设置 → 通知 → PaperLingo 中开启。"}catch{reminderMessage=error.localizedDescription}}}
+                    else {store.reminders.disable();reminderMessage="已关闭系统提醒，应用内仍可复习。"}
+                })).labelsHidden().toggleStyle(.switch)
+            }
+            HStack {
+                Text("提醒时间").font(.system(size:12));Spacer()
+                Picker("时",selection:$hour){ForEach(0..<24){Text(String(format:"%02d",$0)).tag($0)}}.labelsHidden().frame(width:75)
+                Text(":")
+                Picker("分",selection:$minute){ForEach(0..<60){Text(String(format:"%02d",$0)).tag($0)}}.labelsHidden().frame(width:75)
+                Text("Asia/Shanghai").font(.system(size:10,design:.monospaced)).foregroundStyle(Palette.muted)
+            }
+            if !reminderMessage.isEmpty {Text(reminderMessage).font(.system(size:11)).foregroundStyle(Palette.green)}
+            Button("打开 macOS 通知设置"){if let url=URL(string:"x-apple.systempreferences:com.apple.Notifications-Settings.extension"){NSWorkspace.shared.open(url)}}.buttonStyle(.bordered).font(.system(size:11))
+            Button("发送测试提醒"){Task{do{try await store.reminders.test();reminderMessage="测试提醒已提交给 macOS，将在 3 秒后显示。"}catch{reminderMessage=error.localizedDescription}}}.buttonStyle(.bordered).font(.system(size:11))
+            Text("系统权限需在这台 Mac 上授权。通知提前安排 30 天，内容随每次学习更新；超过一个月未打开应用需重新打开更新。").font(.system(size:10)).foregroundStyle(Palette.muted).lineSpacing(4)
+        }
+        settingsCard("你的资料",icon:"externaldrive") {
+            Text("论文副本、词库、查询与复习日志均保存在本机。").font(.system(size:12))
+            Text(store.dataURL.path).font(.system(size:10,design:.monospaced)).foregroundStyle(Palette.muted).textSelection(.enabled)
+            HStack {Button("打开数据目录"){NSWorkspace.shared.open(store.dataURL)};Button("导出词库、档案与笔记…"){store.exportBackup()}}.buttonStyle(.bordered).font(.system(size:11))
+            Text("JSON 包含词条、论文档案、个人笔记与最新摘要，不含 PDF、完整日志或检索向量；完整备份请退出应用后复制整个数据目录。目前不支持 JSON 导入。").font(.system(size:10)).foregroundStyle(Palette.muted)
+        }
     }
     func statusRow(_ title:String,detail:String,ready:Bool)->some View {HStack(alignment:.top){Text(title).font(.system(size:12,weight:.medium));Spacer();Circle().fill(ready ? Palette.green : Palette.orange).frame(width:6,height:6).padding(.top,4);Text(detail).font(.system(size:11)).foregroundStyle(Palette.muted).textSelection(.enabled).multilineTextAlignment(.trailing)}}
     func settingsCard<Content:View>(_ title:String,icon:String,@ViewBuilder content:()->Content)->some View {VStack(alignment:.leading,spacing:17){Label(title,systemImage:icon).font(.system(size:14,weight:.semibold)).padding(.bottom,2);content()}.padding(24).background(.white.opacity(0.7),in:RoundedRectangle(cornerRadius:13)).overlay(RoundedRectangle(cornerRadius:13).stroke(Palette.line,lineWidth:1))}
