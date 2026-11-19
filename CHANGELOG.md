@@ -4,7 +4,7 @@ Notable changes are recorded here. Version numbers follow `MAJOR.MINOR.PATCH`; v
 
 ## [Unreleased]
 
-## 0.3.1 - 2026-11-19
+## [0.3.1] - 2026-11-19
 
 - Send the original PDF in an inline Responses file input when generating an OpenAI paper summary. Use the paper’s figures, tables, and later pages for the same three-part Chinese summary. Local PDF summaries and web snapshots keep their existing input bounds.
 - Mark each summary’s source coverage, distinguish earlier opening summaries from full-PDF results, and continue to index a single Chinese summary per paper.
@@ -204,7 +204,8 @@ Validation scope and limitations are documented in [v0.2.1 verification](docs/VE
 - Model accuracy and gap-free speech playback are not guaranteed.
 - Offline app builds use ad-hoc signing by default and are not Apple-notarized.
 
-[Unreleased]: https://github.com/yuan1615/PaperLingo/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/yuan1615/PaperLingo/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/yuan1615/PaperLingo/releases/tag/v0.3.1
 [0.3.0]: https://github.com/yuan1615/PaperLingo/releases/tag/v0.3.0
 [0.2.9]: https://github.com/yuan1615/PaperLingo/releases/tag/v0.2.9
 [0.2.8]: https://github.com/yuan1615/PaperLingo/releases/tag/v0.2.8
