@@ -126,6 +126,7 @@ public struct OpenAIClient: Sendable {
     }
 
     public func voicePracticeSession(instructions: String, material: String? = nil, voice: String = Self.defaultVoice,
+                                     keyboardOnly: Bool = false,
                                      onEvent: @escaping @Sendable (VoicePracticeEvent) async -> Void,
                                      interruptPlayback: @escaping @Sendable (String) async -> Int?) throws -> VoicePracticeSession {
         guard !apiKey.isEmpty, apiKey.utf8.count <= 1024, apiKey.utf8.allSatisfy({ (33...126).contains($0) }) else {
@@ -138,7 +139,7 @@ public struct OpenAIClient: Sendable {
         request.setValue("Bearer " + apiKey, forHTTPHeaderField: "Authorization")
         let connectionRequest = request
         guard let connect = practiceSocket else { throw Failure("语音连接未配置。") }
-        return VoicePracticeSession(instructions: instructions, material: material, voice: voice, timeout: realtimeTimeout,
+        return VoicePracticeSession(instructions: instructions, material: material, voice: voice, keyboardOnly: keyboardOnly, timeout: realtimeTimeout,
                                     connect: { connect(connectionRequest) }, onEvent: onEvent, interruptPlayback: interruptPlayback)
     }
 

@@ -260,3 +260,15 @@ PAPERLINGO_UI_CHECK_SOURCE=Tests/PaperLingoUITests/OnlineSpeechChecks.swift bash
 ```
 
 实际项目的鉴权、模型权限和账单由使用者配置自己的密钥后验证。仓库和测试不需要真实 API Key。
+
+## 验证口语练习的音频设备
+
+在 Mac 上退出 PaperLingo 后，可用已安装的 App 检查当前麦克风和输出设备。首次使用时需要允许麦克风权限。
+
+```bash
+audio_result="$(mktemp)"
+open -n -W -a /Applications/PaperLingo.app --stdout "$audio_result" --args --check-speaking-audio
+cat "$audio_result"
+```
+
+自检使用与口语练习相同的录放音路径。收到 24 kHz 麦克风数据并播完 100 毫秒静音后，程序输出 `PASS` 并退出。结果中的 `mode=voiceProcessing` 表示已启用系统语音处理，`mode=standard` 表示已自动切换为标准音频。自检只在内存中处理录音，全程离线。

@@ -4,229 +4,267 @@ import SwiftUI
 struct SpeakingPracticeScreen: View {
     @ObservedObject var store: AppStore
     @ObservedObject var session: SpeakingSession
+    @AppStorage("speakingInputMode") private var preferredInput = SpeakingInputMode.microphone
+    @State private var reviewing = false
     @State private var showSaved = false
     @State private var edit: SpeakingPracticeExpression?
-    @State private var showTranscript = false
-    @State private var showSource = false
+    @State private var draft = ""
+    @State private var startError: String?
+    @State private var sending = false
+    @State private var showResearchProgress = false
+    @FocusState private var focused: Bool
+
+    private var hasReview: Bool {
+        !session.isActive && (session.phase == .ended || !session.transcript.isEmpty)
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Text("口语练习").font(.system(size: 26, weight: .medium, design: .serif))
-                Spacer()
-                Button {
-                    showSaved.toggle()
-                } label: {
-                    Label(showSaved ? "回到练习" : "已保存表达（\(store.speakingExpressions.count)）",
-                          systemImage: showSaved ? "arrow.uturn.backward" : "bookmark")
-                }.disabled(session.isActive)
-            }
+        VStack(spacing: 0) {
+            header
+            Divider()
             if showSaved {
-                if store.speakingExpressions.isEmpty {
-                    EmptyContent(icon: "bookmark", title: "还没有保存的表达", detail: "练习后，挑一句想在下次用到的英语存到这里。")
-                } else {
-                    ScrollView { LazyVStack(alignment: .leading, spacing: 10) {
-                        ForEach(store.speakingExpressions) { SpeakingSavedRow(store: store, expression: $0) }
-                    } }
+                SpeakingSavedExpressionsView(store: store)
+            } else if session.isActive {
+                SpeakingMaterialPicker(store: store, active: true)
+                    .padding(.horizontal, 22).padding(.vertical, 9)
+                Divider()
+                SpeakingConversationView(session: session, mode: store.speakingMode, canUseStarter: draft.isEmpty) { starter in
+                    draft = starter
+                    focused = true
                 }
+                Divider()
+                liveControls
+            } else if reviewing && hasReview {
+                review
             } else {
-                Picker("练习模式", selection: Binding(get: { store.speakingMode }, set: { store.changeSpeakingMode($0) })) {
-                    ForEach(SpeakingPracticeMode.allCases, id: \.self) { Text($0.title).tag($0) }
-                }.pickerStyle(.segmented).labelsHidden().frame(maxWidth: 430)
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        materialCard
-                        callCard
-                        if !session.transcript.isEmpty { transcript }
-                        if session.phase == .ended || (!session.isActive && !session.transcript.isEmpty) { recap }
-                    }.padding(.bottom, 15).frame(maxWidth: .infinity, alignment: .leading)
-                }
+                preparation
             }
         }
-        .padding(28).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .foregroundStyle(Palette.ink)
         .onReceive(session.$transcript) { store.trackSpeakingTurns($0) }
+        .onChange(of: session.phase) { _, phase in
+            switch phase {
+            case .ended:
+                draft = ""
+                reviewing = true
+            case .failed, .audioUnavailable:
+                reviewing = !session.transcript.isEmpty
+                startError = session.errorMessage
+            default: break
+            }
+        }
         .sheet(item: $edit) { expression in
             SpeakingExpressionEditor(store: store, expression: expression, sources: store.speakingMaterials)
         }
     }
 
-    private var materialCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            switch store.speakingMode {
-            case .paper:
-                Picker("讨论论文", selection: Binding(get: { store.speakingPaperID }, set: {
-                    store.speakingPaperID = $0; store.speakingExcerpt = nil
-                })) {
-                    Text("选择论文").tag(nil as String?)
-                    ForEach(store.papers) { Text($0.title).tag(Optional($0.id)) }
-                }.disabled(store.papers.isEmpty)
-                if store.papers.isEmpty { Text("导入一篇论文后，可以围绕它的摘要或原文选区练口语。").font(.callout) }
-            case .vocabulary:
-                Picker("目标词", selection: $store.speakingWordID) {
-                    Text("选择词条").tag(nil as String?)
-                    ForEach(store.words) { Text($0.text).tag(Optional($0.id)) }
-                }.disabled(store.words.isEmpty)
-                if store.words.isEmpty { Text("在阅读空间查过的词会出现在这里，也可以直接告诉教练你想练哪个词。").font(.callout) }
-            case .free:
-                Text("今天想聊什么？").font(.system(size: 18, weight: .medium, design: .serif))
-                Text("用英语说说刚读到的观点，或者让教练问你一个问题。").font(.callout).foregroundStyle(Palette.muted)
+    private var header: some View {
+        HStack(spacing: 12) {
+            Button { store.layout.sidebarVisible.toggle() } label: { Image(systemName: "sidebar.left") }
+                .buttonStyle(ReadingButtonStyle()).help("显示或收起导航").accessibilityLabel("显示或收起导航")
+            Text(showSaved ? "已保存表达" : "口语练习")
+                .font(.system(size: 24, weight: .semibold, design: .serif)).accessibilityAddTraits(.isHeader)
+            Spacer(minLength: 4)
+            if store.researchBusy {
+                Button { showResearchProgress.toggle() } label: { Image(systemName: "doc.badge.clock") }
+                    .help("查看论文整理进度").accessibilityLabel("查看论文整理进度")
+                    .popover(isPresented: $showResearchProgress) { ResearchCompactStatus(store: store, audio: store.audio) }
             }
-            if let source = store.selectedSpeakingSource {
-                DisclosureGroup(isExpanded: $showSource) {
-                    Text(source.text.isEmpty ? source.title : source.text)
-                        .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading).padding(.top, 6)
-                } label: {
-                    Text([source.coverage, source.page.map { "第 \($0 + 1) 页" }].compactMap { $0 }.joined(separator: " · "))
-                }.font(.callout)
-                if session.isActive && !store.speakingMaterials.contains(source) {
-                    Button("将这份材料带入当前对话") { store.addSpeakingMaterial() }.buttonStyle(.bordered)
+            if session.isActive {
+                if let start = store.speakingStartTime {
+                    Text(start, style: .timer).monospacedDigit().font(.callout).foregroundStyle(.secondary)
+                        .accessibilityLabel("对话时长")
+                }
+                Button { session.stop() } label: { Label("结束对话", systemImage: "phone.down") }
+                    .accessibilityIdentifier("speaking.finish")
+            } else if showSaved {
+                Button { showSaved = false } label: { Label("回到练习", systemImage: "arrow.uturn.backward") }
+            } else {
+                if hasReview && !reviewing {
+                    Button("上次复盘") { reviewing = true }
+                }
+                Button { showSaved = true } label: {
+                    Label("已保存表达", systemImage: "bookmark")
+                }.accessibilityIdentifier("speaking.saved")
+                if reviewing && hasReview {
+                    Button {
+                        startError = nil
+                        reviewing = false
+                    } label: { Label("新对话", systemImage: "plus") }
+                        .buttonStyle(.borderedProminent).tint(Palette.green).accessibilityIdentifier("speaking.restart")
                 }
             }
-            if session.isActive, !store.speakingMaterials.isEmpty {
-                Text("本次已选 · " + store.speakingMaterials.map(\.title).joined(separator: "、"))
-                    .font(.caption).foregroundStyle(Palette.muted).textSelection(.enabled)
-            }
-        }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
-            .background(.white.opacity(0.8), in: RoundedRectangle(cornerRadius: 10))
+        }
+        .buttonStyle(.bordered).controlSize(.regular)
+        .padding(.horizontal, 22).frame(height: 58)
     }
 
-    private var status: String {
-        switch session.phase {
-        case .idle: return "准备开始"
-        case .requestingPermission: return "正在请求麦克风权限"
-        case .connecting: return "正在连接 OpenAI"
-        case .listening: return "轮到你说"
-        case .userSpeaking: return "正在听你说"
-        case .thinking: return "教练正在思考"
-        case .assistantSpeaking: return "教练正在说，可以插话"
-        case .ended: return "对话已结束"
-        case .failed: return "对话未连接"
+    private var preparation: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                SpeakingMaterialPicker(store: store, active: false)
+                Divider()
+                VStack(alignment: .leading, spacing: 9) {
+                    Text("我的输入方式").font(.headline)
+                    HStack(spacing: 8) {
+                        inputChoice(.microphone, title: "用麦克风", icon: "mic")
+                        inputChoice(.keyboard, title: "用键盘", icon: "keyboard")
+                    }
+                    Text(preferredInput == .keyboard
+                         ? "你打字，教练用语音回答。麦克风保持关闭。"
+                         : "你和教练用语音交流，教练说话时也可以插话。")
+                        .font(.callout).foregroundStyle(.secondary)
+                }
+                Divider()
+                HStack(spacing: 18) {
+                    Text(preferredInput == .keyboard
+                         ? "已发送的文字和选中的材料将交给 OpenAI，按 API 用量计费。"
+                         : "麦克风声音和选中的材料将交给 OpenAI，按 API 用量计费。")
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 2)
+                    Button {
+                        store.startSpeaking(inputMode: preferredInput)
+                        startError = session.isActive ? nil : store.speakingMessage
+                    } label: {
+                        Label("开始对话", systemImage: "arrow.right.circle.fill").fixedSize()
+                    }.buttonStyle(PrimaryButton()).accessibilityIdentifier("speaking.start")
+                }
+                if let startError { errorNote(startError) }
+            }
+            .padding(24).frame(maxWidth: 720, alignment: .leading)
+            .background(.white, in: RoundedRectangle(cornerRadius: 14))
+            .overlay { RoundedRectangle(cornerRadius: 14).strokeBorder(Palette.line).allowsHitTesting(false) }
+            .padding(24).frame(maxWidth: .infinity)
         }
     }
 
-    private var callCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Label(session.isMuted && session.isActive ? status + " · 已静音" : status,
-                  systemImage: session.isActive ? "waveform" : "mic")
-                .font(.system(size: 21, weight: .medium, design: .serif)).accessibilityIdentifier("speaking.status")
-            if session.isActive {
-                if let start = store.speakingStartTime { Text(start, style: .timer).monospacedDigit().font(.caption) }
-                HStack {
-                    Button { session.toggleMute() } label: {
-                        Label(session.isMuted ? "打开麦克风" : "静音", systemImage: session.isMuted ? "mic.slash" : "mic")
-                    }.buttonStyle(.bordered).disabled(session.phase == .requestingPermission || session.phase == .connecting)
-                    if session.phase == .assistantSpeaking || session.phase == .thinking {
-                        Button("我来说") { session.interrupt() }.buttonStyle(.bordered)
-                    }
-                    Spacer()
-                    Button("结束对话") { session.stop() }.buttonStyle(.borderedProminent).tint(Palette.green)
-                }
-            } else {
-                Text("开始后，麦克风声音和选中的材料将直接发给 OpenAI，按 API 用量计费。")
-                    .font(.callout).foregroundStyle(Palette.ink)
-                Button { store.startSpeaking() } label: {
-                    Label(session.phase == .idle ? "开始对话" : "开始新对话", systemImage: "mic.fill")
-                }.buttonStyle(PrimaryButton()).accessibilityIdentifier("speaking.start")
+    private func inputChoice(_ mode: SpeakingInputMode, title: String, icon: String) -> some View {
+        let selected = preferredInput == mode
+        return Button {
+            preferredInput = mode
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: icon).frame(width: 20)
+                Text(title).fontWeight(.medium)
+                Spacer(minLength: 8)
+                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(selected ? Palette.green : Palette.line)
             }
-            if let error = session.errorMessage { Text(error).font(.callout).foregroundStyle(Palette.orange).textSelection(.enabled) }
-            if let message = store.speakingMessage { Text(message).font(.callout).textSelection(.enabled) }
-        }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
-            .background(Palette.pale, in: RoundedRectangle(cornerRadius: 12))
+            .padding(.horizontal, 12).frame(height: 39)
+            .background(selected ? Palette.pale : Color.white, in: RoundedRectangle(cornerRadius: 8))
+            .overlay { RoundedRectangle(cornerRadius: 8).strokeBorder(selected ? Palette.green : Palette.line) }
+            .contentShape(Rectangle())
+        }.buttonStyle(.plain).accessibilityAddTraits(selected ? .isSelected : [])
     }
 
-    private var transcript: some View {
-        DisclosureGroup(isExpanded: $showTranscript) {
-            LazyVStack(alignment: .leading, spacing: 12) {
-                ForEach(session.transcript.filter { !$0.text.isEmpty }) { turn in
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack {
-                            Text(turn.role == .user ? "我" : "教练").font(.caption).foregroundStyle(Palette.muted)
-                            Spacer()
-                            if turn.isFinal && turn.role == .user && !session.isActive {
-                                Button("保存这句") { edit = draft(turn: turn) }.font(.caption)
-                            }
-                        }
-                        Text(turn.text).textSelection(.enabled)
-                    }
-                }
-            }.padding(.top, 8)
-        } label: { Text("本次对话转写").font(.headline) }
+    private var status: (text: String, icon: String) {
+        switch session.phase {
+        case .requestingPermission: return ("正在请求麦克风权限", "mic")
+        case .connecting: return ("正在连接 OpenAI…", "antenna.radiowaves.left.and.right")
+        case .listening, .userSpeaking:
+            if session.inputMode == .keyboard { return ("轮到你打字", "keyboard") }
+            if session.isMuted { return ("麦克风已静音", "mic.slash") }
+            return session.phase == .userSpeaking ? ("正在听你说", "waveform") : ("轮到你说", "mic.fill")
+        case .sendingText: return ("正在发送…", "paperplane")
+        case .thinking: return ("教练正在思考", "ellipsis.bubble")
+        case .assistantSpeaking: return ("教练正在回答", "speaker.wave.2.fill")
+        case .interrupting: return ("正在打断回答…", "pause")
+        case .audioUnavailable: return ("音频设备未就绪", "speaker.slash")
+        case .failed: return ("连接已断开", "wifi.slash")
+        case .ended: return ("对话已结束", "checkmark.circle")
+        case .idle: return ("准备开始", "mic")
+        }
     }
 
-    private func draft(turn: SpeakingTurn? = nil) -> SpeakingPracticeExpression {
-        let context = turn.flatMap { store.speakingTurnContexts[$0.id] }
-        return .init(original: turn?.text ?? "", improved: "", mode: context?.mode ?? store.speakingMode, source: context?.source)
-    }
-
-    private var recap: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("练习复盘").font(.system(size: 19, weight: .medium, design: .serif))
-            HStack {
-                Button("生成表达建议") { store.suggestSpeakingExpressions() }
-                    .disabled(store.speakingFeedbackBusy || !session.transcript.contains { $0.role == .user && !$0.text.isEmpty })
-                Button("手动记一句") { edit = draft() }
-                if store.speakingFeedbackBusy { ProgressView().controlSize(.small) }
-            }
-            Text("生成建议会将最近最多 12 段自己的转写发给 OpenAI，返回最多 3 条供你挑选。")
-                .font(.caption).foregroundStyle(Palette.muted)
-            ForEach(store.speakingSuggestions) { suggestion in
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(suggestion.original).font(.callout).foregroundStyle(Palette.muted)
-                    Text(suggestion.improved).font(.body)
-                    Text(suggestion.reason).font(.caption)
-                    Button("编辑并保存") { edit = suggestion }.buttonStyle(.bordered)
-                }.padding(.vertical, 6)
-            }
-            ForEach(store.speakingMaterials.filter { $0.wordID != nil }) { source in
-                HStack {
-                    Text(source.title).lineLimit(1)
-                    Spacer()
-                    if let id = source.wordID, store.speakingRated.contains(id) {
-                        Text("已评分").font(.caption).foregroundStyle(Palette.green)
-                    } else {
-                        ForEach(Grade.allCases, id: \.rawValue) { grade in
-                            Button(grade.title) { store.rateSpeakingSource(source, grade: grade) }
-                        }.controlSize(.small)
-                    }
-                }
-            }
-        }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
-            .background(.white.opacity(0.8), in: RoundedRectangle(cornerRadius: 10))
-    }
-}
-
-struct SpeakingSavedRow: View {
-    @ObservedObject var store: AppStore
-    let expression: SpeakingPracticeExpression
-    @State private var editing = false
-
-    var body: some View {
+    private var liveControls: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text(expression.mode.title + " · " + expression.created.formatted(date: .abbreviated, time: .shortened))
-                    .font(.caption).foregroundStyle(Palette.muted)
-                Spacer()
-                Button("编辑") { editing = true }.controlSize(.small)
+            HStack(spacing: 10) {
+                Label(status.text, systemImage: status.icon)
+                    .font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.green)
+                    .accessibilityIdentifier("speaking.status")
+                if session.usingStandardAudio {
+                    Image(systemName: "headphones").foregroundStyle(.secondary)
+                        .help("当前使用标准音频。佩戴耳机可减少回声。").accessibilityLabel("标准音频，建议佩戴耳机")
+                }
+                Spacer(minLength: 4)
+                if session.inputMode == .microphone {
+                    Button { session.toggleMute() } label: {
+                        Label(session.isMuted ? "取消静音" : "静音", systemImage: session.isMuted ? "mic.slash.fill" : "mic")
+                    }.disabled(session.phase == .requestingPermission || session.phase == .connecting)
+                        .accessibilityIdentifier("speaking.mute")
+                }
+                Button { session.interrupt() } label: { Label("打断回答", systemImage: "stop.circle") }
+                    .disabled(session.phase != .assistantSpeaking && session.phase != .thinking)
+                    .accessibilityIdentifier("speaking.interrupt")
+            }.frame(minHeight: 27).buttonStyle(.bordered)
+            if session.inputMode == .keyboard {
+                HStack(alignment: .bottom, spacing: 10) {
+                    TextField("写给教练…", text: $draft, axis: .vertical)
+                        .textFieldStyle(.plain).font(.system(size: 15))
+                        .lineLimit(1...4).focused($focused)
+                        .padding(.horizontal, 12).padding(.vertical, 10)
+                        .background(.white, in: RoundedRectangle(cornerRadius: 9))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 9).strokeBorder(focused ? Palette.green : Palette.line)
+                                .allowsHitTesting(false)
+                        }
+                        .accessibilityLabel("写给教练的消息").accessibilityIdentifier("speaking.message")
+                    Button(action: sendDraft) { Label("发送", systemImage: "arrow.up").fixedSize() }
+                        .keyboardShortcut(.return, modifiers: .command)
+                        .buttonStyle(.borderedProminent).controlSize(.large).tint(Palette.green)
+                        .disabled(!canSendDraft).help("发送消息（⌘↩）").accessibilityIdentifier("speaking.send")
+                }
+                Text(overLimit ? "每条消息最多 \(VoicePracticeSession.maximumTextCharacters) 个字符，请分开发送。" : "⌘↩ 发送")
+                    .font(.caption).foregroundStyle(overLimit ? Palette.orange : .secondary)
             }
-            if !expression.original.isEmpty { Text(expression.original).foregroundStyle(Palette.muted).textSelection(.enabled) }
-            if !expression.improved.isEmpty { Text(expression.improved).font(.headline).textSelection(.enabled) }
-            if !expression.reason.isEmpty { Text(expression.reason).font(.callout).textSelection(.enabled) }
-            if let source = expression.source {
-                if let paper = store.papers.first(where: { $0.id == source.paperID }) {
-                    Button { store.open(paper, page: source.page) } label: {
-                        Label((source.paperTitle ?? paper.title) + (source.page.map { " · 第 \($0 + 1) 页" } ?? ""), systemImage: "doc.text")
-                    }.buttonStyle(.link).font(.caption)
-                } else { Text(source.title).font(.caption).foregroundStyle(Palette.muted) }
+        }
+        .frame(maxWidth: 900).padding(.horizontal, 22).padding(.vertical, 12)
+        .frame(maxWidth: .infinity).background(Palette.cream)
+        .onAppear { if session.inputMode == .keyboard { focused = true } }
+    }
+
+    private var trimmedDraft: String { draft.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var overLimit: Bool { trimmedDraft.count > VoicePracticeSession.maximumTextCharacters || trimmedDraft.utf8.count > 64_000 }
+    private var canSendDraft: Bool { session.canSendText && !sending && !trimmedDraft.isEmpty && !overLimit }
+
+    private func sendDraft() {
+        guard canSendDraft else { return }
+        let message = draft
+        sending = true
+        Task { @MainActor in
+            defer { sending = false }
+            if await session.sendText(message), draft == message { draft = "" }
+        }
+    }
+
+    private var review: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                if let error = session.errorMessage { errorNote(error) }
+                SpeakingReviewPanel(store: store, session: session) { edit = $0 }
+                if !session.transcript.isEmpty {
+                    Text("本次对话").font(.headline)
+                    ForEach(session.transcript) { turn in
+                        SpeakingMessageRow(turn: turn, save: turn.isFinal && turn.role == .user ? { save(turn) } : nil)
+                    }
+                }
             }
-        }.padding(14).frame(maxWidth: .infinity, alignment: .leading)
-            .background(.white.opacity(0.8), in: RoundedRectangle(cornerRadius: 9))
-            .sheet(isPresented: $editing) {
-                SpeakingExpressionEditor(store: store, expression: expression, sources: expression.source.map { [$0] } ?? [])
-            }
+            .padding(22).frame(maxWidth: 900).frame(maxWidth: .infinity)
+        }
+    }
+
+    private func save(_ turn: SpeakingTurn) {
+        let context = store.speakingTurnContexts[turn.id]
+        edit = .init(original: turn.text, improved: "", mode: context?.mode ?? store.speakingMode, source: context?.source)
+    }
+
+    private func errorNote(_ text: String) -> some View {
+        Label(text, systemImage: "exclamationmark.circle").font(.callout).foregroundStyle(Palette.orange)
+            .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
     }
 }
 
-private struct SpeakingExpressionEditor: View {
+struct SpeakingExpressionEditor: View {
     @ObservedObject var store: AppStore
     @State var expression: SpeakingPracticeExpression
     let sources: [SpeakingPracticeSource]

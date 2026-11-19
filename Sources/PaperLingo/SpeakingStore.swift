@@ -43,7 +43,7 @@ extension AppStore {
         }
     }
 
-    func startSpeaking() {
+    func startSpeaking(inputMode: SpeakingInputMode = .microphone) {
         guard !speakingSession.isActive else { return }
         do {
             let client = try onlineClient()
@@ -58,7 +58,7 @@ extension AppStore {
             let preferred = UserDefaults.standard.string(forKey: "openAIVoice") ?? OpenAIClient.defaultVoice
             let voice = OpenAIClient.voices.contains(preferred) ? preferred : OpenAIClient.defaultVoice
             speakingSession.start(client: client, instructions: SpeakingPracticeCoach.instructions(mode: speakingMode),
-                                  material: SpeakingPracticeCoach.material(sources: speakingMaterials), voice: voice)
+                                  material: SpeakingPracticeCoach.material(sources: speakingMaterials), voice: voice, inputMode: inputMode)
         } catch { speakingMessage = error.localizedDescription }
     }
 

@@ -4,6 +4,10 @@ Notable changes are recorded here. Version numbers follow `MAJOR.MINOR.PATCH`; v
 
 ## [Unreleased]
 
+- Redesign Mac speaking practice around a live conversation. Coach captions appear as the reply streams, controls stay within reach as messages scroll, and completed turns open directly in the review view.
+- Type a message in any speaking-practice mode and hear the coach reply on the same Realtime connection. Keyboard sessions use only the output device. Typed turns can be reviewed and saved alongside the selected paper or vocabulary.
+- Keep speaking practice available when macOS cannot start echo cancellation. PaperLingo retries with separate microphone and playback engines and shows device-specific details if both attempts fail.
+
 ## [0.4.0] - 2026-11-19
 
 - Start a native speech-to-speech practice session from the sidebar, a paper, a reading selection or a vocabulary entry. Switch among paper discussion, vocabulary practice and free conversation on one Realtime connection.

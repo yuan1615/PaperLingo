@@ -28,7 +28,7 @@ struct RootView:View {
     var body:some View {
         GeometryReader { geometry in
         let sidebarWidth = store.route == .library ? 190.0 : min(222.0,max(184.0,geometry.size.width * 0.17))
-        let compactChrome = store.route == .library || (store.route == .reading && store.selectedPaper != nil)
+        let compactChrome = store.route == .library || store.route == .speaking || (store.route == .reading && store.selectedPaper != nil)
         let sidebarShown = layout.sidebarVisible && !(layout.focused && store.route == .reading)
         HStack(spacing:0) {
             Sidebar(store:store).frame(width:sidebarWidth).frame(width:sidebarShown ? sidebarWidth : 0).clipped().allowsHitTesting(sidebarShown).accessibilityHidden(!sidebarShown)
@@ -56,7 +56,7 @@ struct RootView:View {
         }
         }
         .overlay(alignment:.bottomTrailing) {
-            if store.researchBusy && store.route != .library {ResearchCompactStatus(store:store,audio:store.audio).padding(18)}
+            if store.researchBusy && store.route != .library && store.route != .speaking {ResearchCompactStatus(store:store,audio:store.audio).padding(18)}
             else if store.route != .review && store.route != .speaking {AudioBar(audio:store.audio).padding(18)}
         }
         .onExitCommand { if layout.focused {layout.focused=false} }

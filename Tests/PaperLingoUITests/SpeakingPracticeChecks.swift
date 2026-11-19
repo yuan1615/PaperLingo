@@ -12,7 +12,7 @@ private final class SpeakingSocket: RealtimeSpeechSocket, @unchecked Sendable {
     private var messages: [String] = []
     var sent: [String] { lock.withLock { messages } }
     init() { inject(["type": "session.created"]) }
-    func inject(_ event: [String: String]) { channel.continuation.yield(try! JSONEncoder().encode(event)) }
+    func inject(_ event: [String: Any]) { channel.continuation.yield(try! JSONSerialization.data(withJSONObject: event)) }
     func receive() async throws -> Data {
         var iterator = channel.stream.makeAsyncIterator()
         guard let event = await iterator.next() else { throw CancellationError() }
@@ -22,18 +22,42 @@ private final class SpeakingSocket: RealtimeSpeechSocket, @unchecked Sendable {
         lock.withLock { messages.append(json) }
         let body = try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any]
         if body?["type"] as? String == "session.update" { inject(["type": "session.updated"]) }
+        if body?["type"] as? String == "conversation.item.create",
+           let item = body?["item"] as? [String: Any], item["id"] != nil {
+            inject(["type": "conversation.item.added", "item": item])
+        }
+    }
+    func beginReply(_ id: String) {
+        inject(["type": "response.created", "response": ["id": id]])
+        inject(["type": "response.output_audio.delta", "response_id": id, "item_id": id + "-item",
+                "content_index": 0, "delta": Data(repeating: 0, count: 480).base64EncodedString()])
+    }
+    func finishReply(_ id: String, transcript: String) {
+        inject(["type": "response.output_audio_transcript.done", "response_id": id, "item_id": id + "-item", "transcript": transcript])
+        inject(["type": "response.done", "response": ["id": id, "status": "completed"]])
     }
     func close() { channel.continuation.finish() }
 }
 
 @MainActor private final class MockSpeakingAudio: SpeakingAudioIO {
+    private var played: (@MainActor (String) -> Void)?
+    private var item: String?
     func start(onPlayed: @escaping @MainActor (String) -> Void, onDeviceChange: @escaping @MainActor () -> Void)
-        throws -> AsyncThrowingStream<SpeakingMicrophoneChunk, Error> { AsyncThrowingStream { $0.finish() } }
+        throws -> AsyncThrowingStream<SpeakingMicrophoneChunk, Error> {
+        played = onPlayed
+        return AsyncThrowingStream { $0.finish() }
+    }
+    func startPlaybackOnly(onPlayed: @escaping @MainActor (String) -> Void, onDeviceChange: @escaping @MainActor () -> Void) throws {
+        played = onPlayed
+    }
     func setMuted(_ muted: Bool) {}
-    func enqueue(_ pcm: Data, itemID: String) throws {}
-    func responseFinished() {}
+    func enqueue(_ pcm: Data, itemID: String) throws { item = itemID }
+    func responseFinished() {
+        if let item { played?(item) }
+        item = nil
+    }
     func interrupt(_ itemID: String) -> Int? { nil }
-    func stop() {}
+    func stop() { played = nil; item = nil }
 }
 
 private final class FeedbackResponse: URLProtocol {
@@ -110,6 +134,13 @@ private final class FeedbackResponse: URLProtocol {
         try VNImageRequestHandler(cgImage: image).perform([request])
         return request.results?.compactMap { $0.topCandidates(1).first?.string } ?? []
     }
+    static func nativeViews<T: NSView>(_ type: T.Type, in view: NSView) -> [T] {
+        let match = (view as? T).map { [$0] } ?? []
+        return match + view.subviews.flatMap { nativeViews(type, in: $0) }
+    }
+    static func sendButton(in view: NSView) -> NSButton? {
+        nativeViews(NSButton.self, in: view).first { $0.keyEquivalent == "\r" && $0.keyEquivalentModifierMask.contains(.command) }
+    }
     static func writePaper(_ url: URL, quote: String) throws {
         var box = CGRect(x: 0, y: 0, width: 480, height: 640)
         guard let pdf = CGContext(url as CFURL, mediaBox: &box, nil) else { throw AppError.message("Cannot make fixture PDF") }
@@ -143,7 +174,7 @@ private final class FeedbackResponse: URLProtocol {
                               styleMask: [.titled, .resizable], backing: .buffered, defer: false)
         window.appearance = NSAppearance(named: .aqua)
         window.contentView = NSHostingView(rootView: RootView(store: store).preferredColorScheme(.light))
-        window.orderFront(nil)
+        window.makeKeyAndOrderFront(nil)
         defer { store.stopSpeakingWork(); window.orderOut(nil) }
 
         store.openSpeaking()
@@ -183,8 +214,15 @@ private final class FeedbackResponse: URLProtocol {
         store.startSpeaking()
         try await wait { session.phase == .listening }
         try check(store.speakingMaterials.isEmpty && !socket.sent.joined().contains(quote), "Free conversation sends no library material")
+        socket.inject(["type": "input_audio_buffer.speech_started", "item_id": "free-turn"])
+        try await wait { session.phase == .userSpeaking }
+        try await settle(window)
+        _ = try snapshot("speaking-1280-microphone-listening", window, in: work)
+        socket.inject(["type": "input_audio_buffer.speech_stopped", "item_id": "free-turn"])
         socket.inject(["type": "conversation.item.input_audio_transcription.completed", "item_id": "free-turn", "transcript": "I compare it yesterday."])
-        try await wait { store.speakingTurnContexts["free-turn"] != nil }
+        socket.beginReply("spoken-reply")
+        socket.finishReply("spoken-reply", transcript: "What did you compare?")
+        try await wait { store.speakingTurnContexts["free-turn"] != nil && session.phase == .listening }
         store.openSpeaking(paper: paper, excerpt: quote, page: 3)
         store.addSpeakingMaterial()
         store.addSpeakingMaterial()
@@ -226,5 +264,133 @@ private final class FeedbackResponse: URLProtocol {
         try check(visible.contains("The sample is small") && !visible.contains("I compared it yesterday"), "Research archive renders only this paper’s corrected expression")
         store.open(paper, page: corrected.source?.page)
         try check(store.selectedPage == 3 && store.selectedPaperID == paper.id, "Saved source returns to the fourth page")
+
+        // Render the keyboard controls at the minimum window size using only fixture audio and transport.
+        let keyboardSocket = SpeakingSocket()
+        let keyboardSession = SpeakingSession(microphonePermission: { fatalError("Keyboard requested microphone access") },
+            makeAudio: { MockSpeakingAudio() }, workspaceNotifications: .init())
+        let keyboardClient = OpenAIClient(apiKey: "synthetic-key", protocolClass: FeedbackResponse.self, realtimeSocket: { _ in keyboardSocket })
+        let keyboardStore = AppStore(speakingSession: keyboardSession, onlineClient: { keyboardClient })
+        keyboardStore.openSpeaking()
+        keyboardStore.changeSpeakingMode(.free)
+        UserDefaults.standard.set("keyboard", forKey: "speakingInputMode")
+        window.setContentSize(.init(width: 860, height: 620))
+        window.contentView = NSHostingView(rootView: RootView(store: keyboardStore).preferredColorScheme(.light))
+        defer { keyboardStore.stopSpeakingWork() }
+        try await settle(window)
+        _ = try snapshot("speaking-860-keyboard-idle", window, in: work)
+        keyboardStore.startSpeaking(inputMode: .keyboard)
+        try await wait { keyboardSession.canSendText }
+        try await settle(window)
+        _ = try snapshot("speaking-860-keyboard", window, in: work)
+        try check(keyboardSession.inputMode == .keyboard, "Keyboard practice starts without requesting microphone permission")
+        let message = "Could you explain the main finding?"
+        guard let editor = window.firstResponder as? NSTextView else { throw AppError.message("The keyboard composer must receive focus") }
+        editor.insertText(message, replacementRange: editor.selectedRange())
+        try await settle(window)
+        guard let shortcut = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
+            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+            context: nil, characters: "\r", charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36) else {
+            throw AppError.message("Cannot create the send shortcut")
+        }
+        try check(window.performKeyEquivalent(with: shortcut), "The composer handles Command-Return")
+        try await wait { keyboardSocket.sent.contains { $0.contains(message) } && keyboardSocket.sent.contains { $0.contains("response.create") } }
+        keyboardSocket.beginReply("keyboard-first")
+        keyboardSocket.inject(["type": "response.output_audio_transcript.delta", "response_id": "keyboard-first",
+                               "item_id": "keyboard-first-item", "content_index": 0, "delta": "Both methods improved recall."])
+        try await wait { keyboardSession.phase == .assistantSpeaking && keyboardSession.transcript.last?.text.contains("improved recall") == true }
+        try await settle(window)
+        let compact = try snapshot("speaking-860-keyboard-messages", window, in: work)
+        let compactText = try recognized(compact).joined(separator: " ").lowercased()
+        try check(compactText.contains("main finding") && compactText.contains("improved recall"),
+                  "Both sides of the live conversation are visible without expanding a transcript at minimum width")
+        let followUp = "I would compare the results against a baseline."
+        guard let draftEditor = window.firstResponder as? NSTextView else { throw AppError.message("The learner must be able to draft a follow-up") }
+        draftEditor.insertText(followUp, replacementRange: draftEditor.selectedRange())
+        try await settle(window)
+        guard let send = sendButton(in: window.contentView!) else { throw AppError.message("Missing native send control") }
+        try check(draftEditor.string == followUp && !send.isEnabled, "A follow-up can be drafted while the coach is speaking")
+        keyboardSocket.finishReply("keyboard-first", transcript: "Both methods improved recall. How would you explain that result?")
+        try await wait { keyboardSession.canSendText && keyboardSession.transcript.count == 2 &&
+            keyboardSession.transcript.last?.text.contains("explain that result") == true }
+        try await wait { send.isEnabled }
+        send.performClick(nil)
+        try await wait { keyboardSocket.sent.contains { $0.contains(followUp) } }
+        try check(keyboardSocket.sent.filter { $0.contains("response.create") }.count == 2, "Clicking Send submits exactly one more spoken turn")
+        window.setContentSize(.init(width: 1280, height: 800))
+        keyboardSocket.beginReply("keyboard-next")
+        keyboardSocket.finishReply("keyboard-next", transcript: "Good point. Which baseline would you choose, and why?")
+        try await wait { keyboardSession.canSendText && keyboardSession.transcript.count == 4 && keyboardSession.transcript.allSatisfy(\.isFinal) }
+        try await settle(window)
+        let wide = try snapshot("speaking-1280-keyboard-messages", window, in: work)
+        let wideText = try recognized(wide).joined(separator: " ").lowercased()
+        try check(wideText.contains("against a baseline") && wideText.contains("which baseline"),
+                  "The latest question and answer stay visible after another turn")
+        let extraTurns = try await checkScrolling(session: keyboardSession, socket: keyboardSocket, window: window, work: work)
+        window.setContentSize(.init(width: 1280, height: 800))
+        keyboardSession.stop()
+        try await settle(window)
+        _ = try snapshot("speaking-1280-recap", window, in: work)
+        window.setContentSize(.init(width: 860, height: 620))
+        try await settle(window)
+        _ = try snapshot("speaking-860-recap", window, in: work)
+        try check(keyboardSession.phase == .ended && keyboardSession.transcript.filter { $0.role == .user }.map(\.text) == [message, followUp] + extraTurns,
+                  "Ending a keyboard session preserves all learner turns for review")
+    }
+
+    static func checkScrolling(session: SpeakingSession, socket: SpeakingSocket, window: NSWindow, work: URL) async throws -> [String] {
+        window.setContentSize(.init(width: 860, height: 620))
+        try await settle(window)
+        let view = window.contentView!
+        guard let composerSend = sendButton(in: view) else { throw AppError.message("Missing keyboard composer") }
+        let originalSendFrame = composerSend.convert(composerSend.bounds, to: nil)
+        let prompts = ["Why use a control group?", "What does variance measure?", "Why report uncertainty?"]
+        let replies = ["It helps isolate the treatment effect.", "It describes the spread of observations.", "It shows the range of plausible effects."]
+        for index in prompts.indices {
+            guard await session.sendText(prompts[index]) else { throw AppError.message("Cannot add a fixture turn") }
+            let id = "scroll-\(index)"
+            socket.beginReply(id)
+            socket.finishReply(id, transcript: replies[index])
+            try await wait { session.canSendText }
+        }
+        try await settle(window)
+        guard let scroll = nativeViews(NSScrollView.self, in: view).first(where: {
+            $0.bounds.width > 350 && $0.contentView.documentRect.height > $0.contentView.bounds.height + 100
+        }) else { throw AppError.message("No scrollable message history at minimum width") }
+        let clip = scroll.contentView
+        func bottom() -> CGFloat { clip.isFlipped ? clip.documentRect.maxY - clip.bounds.height : clip.documentRect.minY }
+        try check(abs(clip.bounds.minY - bottom()) < 4, "Incoming turns follow the newest message")
+        let top = clip.isFlipped ? clip.documentRect.minY : clip.documentRect.maxY - clip.bounds.height
+        clip.scroll(to: NSPoint(x: clip.bounds.minX, y: top))
+        scroll.reflectScrolledClipView(clip)
+        try await settle(window)
+        let pinnedOrigin = clip.bounds.minY
+        let last = "Could you give me another example?"
+        guard await session.sendText(last) else { throw AppError.message("Cannot add another fixture turn") }
+        socket.beginReply("later")
+        socket.finishReply("later", transcript: "Compare two groups with similar sample sizes.")
+        try await wait { session.canSendText }
+        try await settle(window)
+        try check(abs(clip.bounds.minY - pinnedOrigin) < 4 && abs(clip.bounds.minY - bottom()) > 100,
+                  "Reading earlier messages holds its position as later messages arrive")
+        guard let currentSend = sendButton(in: view) else { throw AppError.message("Composer disappeared while reading history") }
+        let currentFrame = currentSend.convert(currentSend.bounds, to: nil)
+        let rootFrame = view.convert(view.bounds, to: nil)
+        try check(rootFrame.contains(currentFrame) && abs(currentFrame.midY - originalSendFrame.midY) < 2,
+                  "The keyboard composer remains pinned in the window while the history scrolls")
+        _ = try snapshot("speaking-860-reading-history", window, in: work)
+        let scrollFrame = scroll.convert(scroll.bounds, to: nil)
+        let jump = nativeViews(NSButton.self, in: view).first { button in
+            let bounds = button.convert(button.bounds, to: nil)
+            return button.isEnabled && scrollFrame.contains(NSPoint(x: bounds.midX, y: bounds.midY))
+        }
+        guard let jump else { throw AppError.message("Missing Return to latest button while reading history") }
+        jump.performClick(nil)
+        try await wait { abs(clip.bounds.minY - bottom()) < 4 }
+        try await settle(window)
+        let latest = try snapshot("speaking-860-latest", window, in: work)
+        try check(try recognized(latest).joined(separator: " ").lowercased().contains("similar sample sizes"),
+                  "Return to latest brings the newest turn back into view")
+        return prompts + [last]
     }
 }

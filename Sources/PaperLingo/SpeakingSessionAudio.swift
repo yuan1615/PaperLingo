@@ -10,16 +10,29 @@ struct SpeakingMicrophoneChunk {
 struct SpeakingAudioError: LocalizedError {
     let errorDescription: String?
     init(_ message: String) { errorDescription = message }
+
+    static func detail(_ error: Error) -> String {
+        if let audioError = error as? SpeakingAudioError { return audioError.localizedDescription }
+        let systemError = error as NSError
+        return "\(systemError.domain) \(systemError.code)"
+    }
 }
 
 @MainActor protocol SpeakingAudioIO: AnyObject {
+    var usesVoiceProcessing: Bool { get }
     func start(onPlayed: @escaping @MainActor (String) -> Void,
                onDeviceChange: @escaping @MainActor () -> Void) throws -> AsyncThrowingStream<SpeakingMicrophoneChunk, Error>
+    func startPlaybackOnly(onPlayed: @escaping @MainActor (String) -> Void,
+                           onDeviceChange: @escaping @MainActor () -> Void) throws
     func setMuted(_ muted: Bool)
     func enqueue(_ pcm: Data, itemID: String) throws
     func responseFinished()
     func interrupt(_ itemID: String) -> Int?
     func stop()
+}
+
+extension SpeakingAudioIO {
+    var usesVoiceProcessing: Bool { true }
 }
 
 /// Each input tap exclusively owns one converter and calls it on its serial audio callbacks.
@@ -73,12 +86,78 @@ private final class SpeakingPlayedAudio: @unchecked Sendable {
 }
 
 @MainActor final class SpeakingSessionAudio: SpeakingAudioIO {
-    private let engine = AVAudioEngine()
+    private let makeDevice: @MainActor (Bool) -> SpeakingAudioIO
+    private var device: SpeakingAudioIO?
+    private(set) var usesVoiceProcessing = true
+
+    init(makeDevice: @escaping @MainActor (Bool) -> SpeakingAudioIO = { SpeakingHardwareAudio(usesVoiceProcessing: $0) }) {
+        self.makeDevice = makeDevice
+    }
+
+    func start(onPlayed: @escaping @MainActor (String) -> Void,
+               onDeviceChange: @escaping @MainActor () -> Void) throws -> AsyncThrowingStream<SpeakingMicrophoneChunk, Error> {
+        guard device == nil else { throw SpeakingAudioError("口语音频已启动。") }
+        func attempt(voiceProcessing: Bool) throws -> AsyncThrowingStream<SpeakingMicrophoneChunk, Error> {
+            // Release the failed graph and its audio units before opening the same hardware again.
+            try autoreleasepool {
+                let candidate = makeDevice(voiceProcessing)
+                do {
+                    let stream = try candidate.start(onPlayed: onPlayed, onDeviceChange: onDeviceChange)
+                    device = candidate
+                    usesVoiceProcessing = voiceProcessing
+                    return stream
+                } catch {
+                    candidate.stop()
+                    throw error
+                }
+            }
+        }
+        do { return try attempt(voiceProcessing: true) }
+        catch {
+            let voiceFailure = SpeakingAudioError.detail(error)
+            do { return try attempt(voiceProcessing: false) }
+            catch {
+                throw SpeakingAudioError("请在「系统设置 → 声音」中确认输入和输出设备后重试。\n语音处理：\(voiceFailure)\n标准音频：\(SpeakingAudioError.detail(error))")
+            }
+        }
+    }
+
+    func startPlaybackOnly(onPlayed: @escaping @MainActor (String) -> Void,
+                           onDeviceChange: @escaping @MainActor () -> Void) throws {
+        guard device == nil else { throw SpeakingAudioError("口语音频已启动。") }
+        let candidate = makeDevice(false)
+        do {
+            try candidate.startPlaybackOnly(onPlayed: onPlayed, onDeviceChange: onDeviceChange)
+            device = candidate
+            usesVoiceProcessing = false
+        } catch {
+            candidate.stop()
+            throw SpeakingAudioError("请在「系统设置 → 声音」中确认输出设备后重试。\n音频输出：\(SpeakingAudioError.detail(error))")
+        }
+    }
+
+    func setMuted(_ muted: Bool) { device?.setMuted(muted) }
+    func enqueue(_ pcm: Data, itemID: String) throws {
+        guard let device else { throw SpeakingAudioError("音频设备已断开，请重新开始练习。") }
+        try device.enqueue(pcm, itemID: itemID)
+    }
+    func responseFinished() { device?.responseFinished() }
+    func interrupt(_ itemID: String) -> Int? { device?.interrupt(itemID) }
+    func stop() {
+        device?.stop()
+        device = nil
+    }
+}
+
+@MainActor private final class SpeakingHardwareAudio: SpeakingAudioIO {
+    let usesVoiceProcessing: Bool
+    private var captureEngine: AVAudioEngine?
+    private let playbackEngine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
     private let outputFormat = AVAudioFormat(standardFormatWithSampleRate: SpeakingMicrophoneConverter.sampleRate, channels: 1)!
     private var tapInstalled = false
     private var continuation: AsyncThrowingStream<SpeakingMicrophoneChunk, Error>.Continuation?
-    private var configurationObserver: NSObjectProtocol?
+    private var configurationObservers: [NSObjectProtocol] = []
     private var deviceListeners: [(AudioObjectPropertyAddress, AudioObjectPropertyListenerBlock)] = []
     private var onPlayed: (@MainActor (String) -> Void)?
     private var itemID: String?
@@ -86,25 +165,28 @@ private final class SpeakingPlayedAudio: @unchecked Sendable {
     private var queuedFrames = 0
     private var hasFinishedResponse = false
 
+    init(usesVoiceProcessing: Bool) {
+        self.usesVoiceProcessing = usesVoiceProcessing
+    }
+
     func start(onPlayed: @escaping @MainActor (String) -> Void,
                onDeviceChange: @escaping @MainActor () -> Void) throws -> AsyncThrowingStream<SpeakingMicrophoneChunk, Error> {
-        self.onPlayed = onPlayed
-        let input = engine.inputNode
-        guard input.inputFormat(forBus: 0).sampleRate > 0, input.inputFormat(forBus: 0).channelCount > 0,
-              engine.outputNode.outputFormat(forBus: 0).sampleRate > 0,
-              engine.outputNode.outputFormat(forBus: 0).channelCount > 0 else {
-            throw SpeakingAudioError("请连接麦克风和音频输出设备，再开始练习。")
+        // VPIO needs a shared graph for echo cancellation. With standard I/O each
+        // device runs at its own hardware sample rate.
+        let captureEngine = usesVoiceProcessing ? playbackEngine : AVAudioEngine()
+        self.captureEngine = captureEngine
+        let input = captureEngine.inputNode
+        let inputHardware = input.inputFormat(forBus: 0)
+        guard inputHardware.sampleRate > 0, inputHardware.channelCount > 0 else {
+            throw SpeakingAudioError("没有可用的麦克风。")
         }
-        // Capture and playback share Apple's echo canceller so the coach does not trigger its own VAD.
-        do { try input.setVoiceProcessingEnabled(true) }
-        catch { throw SpeakingAudioError("无法打开语音处理，请检查系统的麦克风与输出设备。") }
+        if usesVoiceProcessing { try input.setVoiceProcessingEnabled(true) }
         let format = input.outputFormat(forBus: 0)
         let encoder = try SpeakingMicrophoneConverter(input: format)
-        engine.attach(player)
-        engine.connect(player, to: engine.mainMixerNode, format: outputFormat)
+        try configurePlayer(onPlayed: onPlayed)
         let (stream, sink) = AsyncThrowingStream<SpeakingMicrophoneChunk, Error>.makeStream(bufferingPolicy: .bufferingOldest(24))
         continuation = sink
-        input.installTap(onBus: 0, bufferSize: 1024, format: format) { @Sendable buffer, time in
+        input.installTap(onBus: 0, bufferSize: 1024, format: nil) { @Sendable buffer, time in
             do {
                 let data = try encoder.encode(buffer)
                 guard !data.isEmpty else { return }
@@ -115,34 +197,67 @@ private final class SpeakingPlayedAudio: @unchecked Sendable {
             } catch { sink.finish(throwing: error) }
         }
         tapInstalled = true
-        engine.prepare()
-        do { try engine.start() }
-        catch { throw SpeakingAudioError("无法启动麦克风和音频输出，请检查设备后重试。") }
-        configurationObserver = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange,
-                                                                       object: engine, queue: .main) { [weak self] _ in
-            Task { @MainActor in
-                if self?.engine.isRunning == false { onDeviceChange() }
-            }
+        try captureEngine.start()
+        if playbackEngine !== captureEngine { try playbackEngine.start() }
+        observeDevices(onDeviceChange)
+        return stream
+    }
+
+    func startPlaybackOnly(onPlayed: @escaping @MainActor (String) -> Void,
+                           onDeviceChange: @escaping @MainActor () -> Void) throws {
+        try configurePlayer(onPlayed: onPlayed)
+        try playbackEngine.start()
+        observeDevices(onDeviceChange)
+    }
+
+    private func configurePlayer(onPlayed: @escaping @MainActor (String) -> Void) throws {
+        let format = playbackEngine.outputNode.outputFormat(forBus: 0)
+        guard format.sampleRate > 0, format.channelCount > 0 else {
+            throw SpeakingAudioError("没有可用的音频输出设备。")
         }
-        for selector in [kAudioHardwarePropertyDefaultInputDevice, kAudioHardwarePropertyDefaultOutputDevice] {
+        self.onPlayed = onPlayed
+        playbackEngine.attach(player)
+        playbackEngine.connect(player, to: playbackEngine.mainMixerNode, format: outputFormat)
+    }
+
+    private func observeDevices(_ onDeviceChange: @escaping @MainActor () -> Void) {
+        var engines = [playbackEngine]
+        var selectors = [kAudioHardwarePropertyDefaultOutputDevice]
+        if let captureEngine {
+            if captureEngine !== playbackEngine { engines.append(captureEngine) }
+            selectors.append(kAudioHardwarePropertyDefaultInputDevice)
+        }
+        for engine in engines {
+            let observer = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange,
+                                                                  object: engine, queue: .main) { [weak self] _ in
+                Task { @MainActor in
+                    guard let self, self.onPlayed != nil else { return }
+                    if !self.playbackEngine.isRunning || self.captureEngine?.isRunning == false { onDeviceChange() }
+                }
+            }
+            configurationObservers.append(observer)
+        }
+        for selector in selectors {
             var address = AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal,
                                                      mElement: kAudioObjectPropertyElementMain)
-            let listener: AudioObjectPropertyListenerBlock = { _, _ in
-                Task { @MainActor in onDeviceChange() }
+            let listener: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+                Task { @MainActor in
+                    if self?.onPlayed != nil { onDeviceChange() }
+                }
             }
             if AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, .main, listener) == noErr {
                 deviceListeners.append((address, listener))
             }
         }
-        return stream
     }
 
     func setMuted(_ muted: Bool) {
-        engine.inputNode.isVoiceProcessingInputMuted = muted
+        // SpeakingSession also silences outgoing PCM, including buffers queued before a mute.
+        if usesVoiceProcessing { captureEngine?.inputNode.isVoiceProcessingInputMuted = muted }
     }
 
     func enqueue(_ pcm: Data, itemID: String) throws {
-        guard engine.isRunning else { throw SpeakingAudioError("音频设备已断开，请重新开始练习。") }
+        guard playbackEngine.isRunning else { throw SpeakingAudioError("音频设备已断开，请重新开始练习。") }
         let total = pcm.count / 2
         guard total > 0, pcm.count.isMultiple(of: 2) else { throw SpeakingAudioError("收到无效的语音片段。") }
         if self.itemID != itemID {
@@ -185,7 +300,7 @@ private final class SpeakingPlayedAudio: @unchecked Sendable {
     }
 
     private func finishIfPlayed() {
-        guard engine.isRunning, player.isPlaying, hasFinishedResponse, let itemID,
+        guard playbackEngine.isRunning, player.isPlaying, hasFinishedResponse, let itemID,
               queuedFrames == played.frames else { return }
         clearPlayback()
         onPlayed?(itemID)
@@ -208,20 +323,22 @@ private final class SpeakingPlayedAudio: @unchecked Sendable {
     }
 
     func stop() {
-        if let configurationObserver { NotificationCenter.default.removeObserver(configurationObserver) }
-        configurationObserver = nil
+        for observer in configurationObservers { NotificationCenter.default.removeObserver(observer) }
+        configurationObservers.removeAll()
         for (var address, listener) in deviceListeners {
             AudioObjectRemovePropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, .main, listener)
         }
         deviceListeners.removeAll()
         if tapInstalled {
-            engine.inputNode.removeTap(onBus: 0)
+            captureEngine?.inputNode.removeTap(onBus: 0)
             tapInstalled = false
         }
         continuation?.finish()
         continuation = nil
         clearPlayback()
-        engine.stop()
+        if let captureEngine, captureEngine !== playbackEngine { captureEngine.stop() }
+        playbackEngine.stop()
+        captureEngine = nil
         onPlayed = nil
     }
 }

@@ -46,7 +46,16 @@ final class AppDelegate:NSObject,NSApplicationDelegate,UNUserNotificationCenterD
     func userNotificationCenter(_ center:UNUserNotificationCenter,willPresent notification:UNNotification,withCompletionHandler completionHandler:@escaping (UNNotificationPresentationOptions)->Void) { completionHandler([.banner,.sound]) }
 }
 
-@main struct PaperLingoApp:App {
+@main enum PaperLingoEntryPoint {
+    @MainActor static func main() async {
+        if CommandLine.arguments.dropFirst().contains("--check-speaking-audio") {
+            exit(await SpeakingAudioCheck.run())
+        }
+        PaperLingoApp.main()
+    }
+}
+
+struct PaperLingoApp:App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
     @StateObject private var store=AppStore()
     var body:some Scene {

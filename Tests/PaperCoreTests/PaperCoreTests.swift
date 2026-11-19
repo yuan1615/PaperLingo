@@ -375,6 +375,7 @@ for (name,run) in checks {
 let online = OpenAIClientTests()
 let onlineChecks: [(String, () async throws -> Void)] = [
     ("Voice practice connection, turns and interruptions", runVoicePracticeProtocolChecks),
+    ("Typed practice turns and spoken Realtime replies", runTypedPracticeProtocolChecks),
     ("Complete online PDF request and provenance", online.testCompletePDFSummaryRequest),
     ("Offline rejection of invalid or oversized PDF inputs", online.testPDFInputBoundaries),
     ("Online text request policy and structured results", online.testTextPolicyAndStructuredResponses),
