@@ -123,14 +123,24 @@ struct ResearchLibraryScreen: View {
                 Button("导入 PDF…") { store.choosePDF() }
                 Button("导入链接…") { store.showLink = true }
                 Divider()
-                let pending = store.papers.filter { !PaperSummary.isCurrent(store.digests[$0.id]) }
-                Button("\(store.analysisOnline ? "用 OpenAI 生成" : "生成")缺失的前三页摘要（\(pending.count) 篇）") {
+                let pending = store.papers.filter(store.needsSummary)
+                Button(batchSummaryAction(for: pending)) {
                     store.startResearch(pending)
                 }.disabled(pending.isEmpty || store.researchBusy || store.searching)
                 Button("更新摘要检索索引") { store.startResearch(store.papers, summarize: false) }.disabled(store.researchBusy || store.searching)
             } label: { Image(systemName: "plus").frame(width: 28, height: 32).contentShape(Rectangle()) }
                 .menuStyle(.borderlessButton).fixedSize().help("导入与批量整理").accessibilityLabel("导入与整理")
         }
+    }
+    private func batchSummaryAction(for papers: [Paper]) -> String {
+        guard !papers.isEmpty else { return "没有待生成的摘要" }
+        guard store.analysisOnline else { return "在本机生成缺失的开头摘要（\(papers.count) 篇）" }
+        let pdfs = papers.filter { $0.kind == "PDF" }.count
+        let webpages = papers.count - pdfs
+        var sources: [String] = []
+        if pdfs > 0 { sources.append("\(pdfs) 份完整 PDF") }
+        if webpages > 0 { sources.append("\(webpages) 篇网页开头") }
+        return "发送 " + sources.joined(separator: " 和 ") + " 给 OpenAI 生成摘要"
     }
     private var filterForm: some View {
         Form {
@@ -211,8 +221,8 @@ struct ResearchPaperRow: View {
                 Text(record.year.isEmpty ? paper.kind : record.year)
                 Spacer()
                 if let digest = store.digests[paper.id] {
-                    Image(systemName: digest.isPartial == true ? "clock" : "sparkles").help(
-                        digest.isPartial == true ? "阶段概览，全文尚未完成" : "已有 AI 汇总")
+                    Image(systemName: digest.isPartial == true ? "clock" : "sparkles")
+                        .help(PaperSummary.coverage(digest, for: paper))
                 }
             }.font(.system(size: 10)).foregroundStyle(Palette.muted)
             Text(([record.category] + Array(record.tags.prefix(2))).joined(separator: " · ")).font(.system(size: 10))
@@ -380,7 +390,7 @@ struct ResearchPaperDetail: View {
             Button("编辑文献信息与分类…") { store.metadataEditor = paper }
             Button("导出档案与笔记 Markdown…") { store.exportArchive(paper) }
             Divider()
-            Button("重新读取前三页并生成摘要") { store.startResearch([paper], refreshText: true) }.disabled(
+            Button(summaryAction(refresh: true)) { store.startResearch([paper], refreshText: true) }.disabled(
                 store.researchBusy || store.searching)
             Button("建立 / 更新检索索引") { store.startResearch([paper], summarize: false) }.disabled(
                 store.researchBusy || store.searching)
@@ -413,24 +423,14 @@ struct ResearchPaperDetail: View {
             Text("我为什么保留这篇论文").font(.system(size: 14, weight: .semibold))
             Text(r.purpose.isEmpty ? "写下与你的课题有什么关系，或什么时候可能用到它。可在「编辑资料」中补充。" : r.purpose).font(.system(size: 12))
                 .lineSpacing(5).foregroundStyle(r.purpose.isEmpty ? Palette.muted : Palette.ink).textSelection(.enabled)
-            if let status = store.textStatuses[paper.id] {
-                Label(
-                    status.chunkCount == 0
-                        ? "开头未提取到文字；扫描件需先 OCR" : (paper.kind == "PDF" ? "只读取前 \(min(3, status.totalPages)) 页 · 原文件共 \(status.totalPages) 页" : "只读取网页开头最多 15,000 字符"),
-                    systemImage: status.chunkCount == 0 ? "doc.viewfinder" : "doc.text.magnifyingglass"
-                ).font(.system(size: 11)).foregroundStyle(Palette.muted)
-            }
             Divider()
             if let digest = store.digests[paper.id] {
                 Text("一句话回顾").font(.system(size: 14, weight: .semibold))
                 Text(digest.oneLine).font(.system(size: 13)).lineSpacing(5).textSelection(.enabled)
+                Text(PaperSummary.coverage(digest, for: paper)).font(.system(size: 11)).foregroundStyle(Palette.muted)
                 Button("查看中文摘要") { tab = 1 }.buttonStyle(.bordered)
             } else {
-                Text("还没有 AI 汇总").font(.system(size: 14, weight: .semibold))
-                Text("只根据前三页的摘要和引言整理研究动机、核心方法与实验结果；未报告的内容会明确标注。").font(.system(size: 12)).foregroundStyle(
-                    Palette.muted
-                ).lineSpacing(5)
-                analyzeButton
+                emptySummary
             }
         }
     }
@@ -442,27 +442,44 @@ struct ResearchPaperDetail: View {
             ).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
         }
     }
+    private func summaryAction(refresh: Bool) -> String {
+        if store.analysisOnline {
+            let source = paper.kind == "PDF" ? "完整 PDF" : "网页开头"
+            return (refresh ? "重新发送" : "发送") + source + " 给 OpenAI 生成摘要"
+        }
+        let source = paper.kind == "PDF" ? "前三页" : "网页开头"
+        return (refresh ? "重新读取" : "读取") + source + "并在本机生成摘要"
+    }
     private var analyzeButton: some View {
         Button {
             store.startResearch([paper])
         } label: {
-            Label(
-                store.digests[paper.id] == nil
-                    ? "生成前三页摘要" : "更新前三页摘要",
-                systemImage: "sparkles")
+            Label(summaryAction(refresh: false), systemImage: "sparkles")
         }.buttonStyle(PrimaryButton()).disabled(store.researchBusy || store.searching)
+    }
+    @ViewBuilder private var emptySummary: some View {
+        Text("还没有论文摘要").font(.system(size: 18, weight: .medium, design: .serif))
+        let scope = paper.kind == "PDF" ? (store.analysisOnline ? "完整 PDF" : "PDF 前三页的文字") : "网页开头最多 15,000 字符"
+        let provider = store.analysisOnline ? "OpenAI 将根据" : "本地模型将根据"
+        Text(provider + scope + "整理论文的研究动机、核心方法和实验结果。")
+            .font(.system(size: 12)).lineSpacing(6).foregroundStyle(Palette.muted)
+        if !store.analysisOnline, paper.kind == "PDF", store.textStatuses[paper.id]?.chunkCount == 0 {
+            Label("PDF 开头没有文字层，本地摘要需要先做 OCR。", systemImage: "doc.viewfinder")
+                .font(.system(size: 11)).foregroundStyle(Palette.muted)
+        }
+        analyzeButton
     }
     @ViewBuilder private var digest: some View {
         if let digest = store.digests[paper.id] {
             Text(digest.oneLine).font(.system(size: 17, weight: .medium, design: .serif)).lineSpacing(6).textSelection(.enabled)
-            Text(PaperSummary.isCurrent(digest) ? (paper.kind == "PDF" ? "前三页摘要 · \(min(3, digest.totalPages)) / \(digest.totalPages) 页" : "网页开头摘要") : "历史摘要 · 可在更多菜单更新")
+            Text(PaperSummary.coverage(digest, for: paper))
                 .font(.system(size: 10)).foregroundStyle(Palette.muted)
-                .help("仅依据开头文字，实验结果为作者的报告，未核验后文实验。")
+            if store.needsSummary(paper) { analyzeButton }
             ForEach(PaperSummary.topics, id: \.rawValue) { topic in
                 VStack(alignment: .leading, spacing: 10) {
                     Text(PaperSummary.title(topic)).font(.system(size: 15, weight: .semibold))
                     let points = digest.points.filter { $0.topic == topic }
-                    if points.isEmpty { Text("开头内容未明确报告。").foregroundStyle(Palette.muted) }
+                    if points.isEmpty { Text("这份摘要没有记录此项。").foregroundStyle(Palette.muted) }
                     ForEach(points) { point in
                         Text(point.text).font(.system(size: 13)).lineSpacing(6).textSelection(.enabled)
                     }
@@ -480,11 +497,7 @@ struct ResearchPaperDetail: View {
                 }.font(.system(size: 11)).padding(.top, 8)
             }.font(.system(size: 11)).foregroundStyle(Palette.muted)
         } else {
-            Text("用三页，留住论文的主要思路。").font(.system(size: 20, design: .serif))
-            Text(store.analysisOnline
-                ? "生成时会将 PDF 前三页的文字或网页开头发送给 OpenAI，按研究动机、核心方法和实验结果生成中文摘要。摘要保存在本机，可用本地检索模型建立语义索引。"
-                : "本地模型只阅读 PDF 前三页或网页开头，按研究动机、核心方法、实验结果生成中文摘要，再用摘要建立每篇唯一的语义索引。").font(.system(size: 12)).lineSpacing(6).foregroundStyle(Palette.muted)
-            analyzeButton
+            emptySummary
         }
     }
     private var personalNotes: some View {

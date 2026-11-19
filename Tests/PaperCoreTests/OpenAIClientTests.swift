@@ -1,4 +1,6 @@
+import CryptoKit
 import Foundation
+import PDFKit
 @_spi(Testing) import PaperCore
 
 private final class StubOpenAIProtocol: URLProtocol {
@@ -33,15 +35,10 @@ private final class StubOpenAIProtocol: URLProtocol {
         Self.lock.withLock { Self.recorded.append(call) }
         guard let url = request.url else { return }
         var status = 200
-        var contentType = "application/json"
+        let contentType = "application/json"
         var data: Data
         switch payload["input"] as? String {
         case "wait": return // Remains in flight until the caller cancels.
-        case "audio":
-            contentType = "audio/wav"
-            data = Data("RIFF0000WAVE".utf8) + Data(repeating: 0, count: 34)
-        case "bad audio":
-            data = Data("html error page".utf8)
         case "private-source":
             status = 401
             data = Data(#"{"error":{"message":"fixture-only private-source"}}"#.utf8)
@@ -65,6 +62,11 @@ private final class StubOpenAIProtocol: URLProtocol {
             }
             status = 500
             data = Data()
+        case nil where payload["input"] is [[String: Any]]:
+            let answer = #"{"oneLine":"合成测试论文。","motivation":"测试整份文件。","method":"对比图形。","results":"第四页给出了结果。","category":"测试","tags":["测试"]}"#
+            let result = ["status": "completed", "output": [
+                ["type": "message", "role": "assistant", "content": [["type": "output_text", "text": answer]]]]] as [String: Any]
+            data = try! JSONSerialization.data(withJSONObject: result)
         default:
             data = Data(#"{"status":"completed","output":[{"type":"reasoning","summary":[]},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"语"},{"type":"output_text","text":"境"}]}]}"#.utf8)
         }
@@ -80,6 +82,67 @@ private final class StubOpenAIProtocol: URLProtocol {
 final class OpenAIClientTests {
     let client = OpenAIClient(apiKey: "fixture-only", protocolClass: StubOpenAIProtocol.self)
 
+    func testCompletePDFSummaryRequest() async throws {
+        StubOpenAIProtocol.reset()
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("fixture-\(UUID().uuidString).pdf")
+        defer { try? FileManager.default.removeItem(at: url) }
+        var box = CGRect(x: 0, y: 0, width: 200, height: 150)
+        guard let drawing = CGContext(url as CFURL, mediaBox: &box, nil) else {
+            throw ResearchError.message("Could not create synthetic PDF")
+        }
+        for page in 1...4 {
+            drawing.beginPDFPage(nil)
+            drawing.fill(CGRect(x: 10, y: 10, width: page * 10, height: 20))
+            drawing.endPDFPage()
+        }
+        drawing.closePDF()
+        let original = try Data(contentsOf: url)
+        let digest = try await client.summarizePDF(paperID: "local-test-id", url: url)
+        let call = StubOpenAIProtocol.calls.first
+        XCTAssertEqual(StubOpenAIProtocol.calls.count, 1)
+        XCTAssertEqual(call?.url?.absoluteString, "https://api.openai.com/v1/responses")
+        XCTAssertEqual(call?.authorization, "Bearer fixture-only")
+        let body = call?.payload ?? [:]
+        XCTAssertEqual(body["model"] as? String, OpenAIClient.summaryModel)
+        XCTAssertEqual((body["reasoning"] as? [String: String])?["effort"], "low")
+        XCTAssertEqual(body["store"] as? Bool, false)
+        let messages = body["input"] as? [[String: Any]]
+        XCTAssertEqual(messages?.count, 1)
+        XCTAssertEqual(messages?.first?["role"] as? String, "user")
+        let content = messages?.first?["content"] as? [[String: String]]
+        XCTAssertEqual(content?.map { $0["type"] ?? "" }, ["input_file", "input_text"])
+        let attachment = content?.first ?? [:]
+        XCTAssertEqual(Set(attachment.keys), ["type", "filename", "file_data"])
+        XCTAssertEqual(attachment["filename"], "paper.pdf")
+        let prefix = "data:application/pdf;base64,"
+        guard let dataURL = attachment["file_data"], dataURL.hasPrefix(prefix),
+              let decoded = Data(base64Encoded: String(dataURL.dropFirst(prefix.count))) else {
+            throw ResearchError.message("Missing inline PDF")
+        }
+        XCTAssertEqual(decoded, original)
+        XCTAssertEqual(PDFDocument(data: decoded)?.pageCount, 4)
+        XCTAssertEqual(digest.processedPages, 4)
+        XCTAssertEqual(digest.totalPages, 4)
+        XCTAssertEqual(digest.pipeline, PaperSummary.fullPDFVersion)
+        XCTAssertEqual(digest.model, OpenAIClient.analysisSignature)
+        XCTAssertEqual(digest.sourceHash, SHA256.hash(data: original).map { String(format: "%02x", $0) }.joined())
+        XCTAssertEqual(digest.paperID, "local-test-id")
+    }
+
+    func testPDFInputBoundaries() async throws {
+        StubOpenAIProtocol.reset()
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".pdf")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try Data("invalid PDF".utf8).write(to: url)
+        do { _ = try await client.summarizePDF(paperID: "p", url: url); fail("Sent invalid PDF") } catch {}
+        let handle = try FileHandle(forWritingTo: url)
+        try handle.truncate(atOffset: 50_000_000)
+        try handle.close()
+        do { _ = try await client.summarizePDF(paperID: "p", url: url); fail("Sent oversized PDF") }
+        catch { XCTAssertTrue(error.localizedDescription.contains("50 MB")) }
+        XCTAssertTrue(StubOpenAIProtocol.calls.isEmpty)
+    }
+
     func testTextPolicyAndStructuredResponses() async throws {
         StubOpenAIProtocol.reset()
         let schema = OpenAIJSONSchema(name: "example", schema: [
@@ -92,8 +155,9 @@ final class OpenAIClientTests {
         XCTAssertEqual(call?.method, "POST")
         XCTAssertEqual(call?.authorization, "Bearer fixture-only")
         let body = call?.payload ?? [:]
-        XCTAssertEqual(Set(body.keys), ["input", "instructions", "model", "store", "max_output_tokens", "text"])
+        XCTAssertEqual(Set(body.keys), ["input", "instructions", "model", "store", "max_output_tokens", "text", "reasoning"])
         XCTAssertEqual(body["model"] as? String, OpenAIClient.textModel)
+        XCTAssertEqual((body["reasoning"] as? [String: String])?["effort"], "none")
         XCTAssertEqual(body["store"] as? Bool, false)
         XCTAssertEqual(body["max_output_tokens"] as? Int, 256)
         XCTAssertEqual(body["input"] as? String, "public test")
@@ -104,20 +168,55 @@ final class OpenAIClientTests {
     }
 
     func testSpeechDataBoundaryAndInputGuards() async throws {
-        StubOpenAIProtocol.reset()
-        let audio = try await client.speech(input: "audio")
-        XCTAssertTrue(audio.starts(with: "RIFF".utf8))
-        let call = StubOpenAIProtocol.calls.first
-        XCTAssertEqual(call?.url?.absoluteString, "https://api.openai.com/v1/audio/speech")
-        XCTAssertEqual(Set((call?.payload ?? [:]).keys), ["model", "input", "voice", "response_format"])
-        XCTAssertEqual(call?.payload["voice"] as? String, OpenAIClient.defaultVoice)
-        XCTAssertEqual(call?.payload["response_format"] as? String, "wav")
+        let source = "Read the words: what is your answer?"
+        let pcm = Data([0, 7, 9, 0])
+        let fixture = SpeechSocketFixture(events: [
+            ["type": "response.output_audio.delta", "delta": pcm.prefix(2).base64EncodedString()],
+            ["type": "response.output_audio.delta", "delta": pcm.suffix(2).base64EncodedString()],
+            ["type": "response.output_audio.done"], ["type": "response.done", "response": ["status":"completed"]]
+        ])
+        let client = fixture.client()
+        let wave = try await client.speech(input: source)
+        XCTAssertEqual(wave.count, 44 + pcm.count)
+        XCTAssertTrue(wave.starts(with: "RIFF".utf8) && wave.dropFirst(8).starts(with: "WAVEfmt ".utf8))
+        XCTAssertEqual(Array(wave[24..<28]), [192, 93, 0, 0]) // UInt32LE 24000
+        XCTAssertEqual(Data(wave.suffix(4)), pcm)
+        XCTAssertEqual(fixture.connections, 1)
+        XCTAssertEqual(fixture.request?.url?.absoluteString, "wss://api.openai.com/v1/realtime?model=gpt-realtime-2.1-mini")
+        XCTAssertEqual(fixture.request?.value(forHTTPHeaderField: "Authorization"), "Bearer fixture-only")
+        let event = try JSONSerialization.jsonObject(with: Data(fixture.sent.utf8)) as? [String: Any]
+        XCTAssertEqual(event?["type"] as? String, "response.create")
+        let response = event?["response"] as? [String: Any] ?? [:]
+        XCTAssertEqual(response["conversation"] as? String, "none")
+        XCTAssertEqual(response["tool_choice"] as? String, "none")
+        XCTAssertEqual(response["output_modalities"] as? [String], ["audio"])
+        let output = (response["audio"] as? [String: [String: Any]])?["output"]
+        XCTAssertEqual(output?["voice"] as? String, OpenAIClient.defaultVoice)
+        XCTAssertEqual((output?["format"] as? [String: Any])?["type"] as? String, "audio/pcm")
+        let input = response["input"] as? [[String: Any]]
+        XCTAssertEqual(input?.count, 1)
+        XCTAssertEqual(input?.first?["role"] as? String, "user")
+        XCTAssertEqual(input?.first?["content"] as? [[String: String]], [["type": "input_text", "text": source]])
+        XCTAssertTrue(!(response["instructions"] as? String ?? "").contains(source))
         do { _ = try await client.speech(input: "audio", voice: "private-reference"); fail("unrecognized voice accepted") } catch {}
         do { _ = try await client.speech(input: String(repeating: "a", count: 4097)); fail("oversized TTS accepted") } catch {}
-        let invalid = OpenAIClient(apiKey: "fixture\r\nheader", protocolClass: StubOpenAIProtocol.self)
-        do { _ = try await invalid.speech(input: "audio"); fail("invalid key accepted") } catch {}
-        XCTAssertEqual(StubOpenAIProtocol.calls.count, 1)
-        do { _ = try await client.speech(input: "bad audio"); fail("invalid WAV accepted") } catch {}
+        do { _ = try await fixture.client(key: "fixture\r\nheader").speech(input: "audio"); fail("invalid key accepted") } catch {}
+        XCTAssertEqual(fixture.connections, 1)
+        for event: [String: Any] in [
+            ["type":"response.output_audio.delta", "delta":"bad?"],
+            ["type":"response.done", "response":["status":"completed"]],
+            ["type":"response.done", "response":["status":"incomplete"]],
+            ["type":"error", "error":["code":"insufficient_quota", "message":"private-source"]]
+        ] {
+            let broken = SpeechSocketFixture(events: [event])
+            do { _ = try await broken.client().speech(input: source); fail("invalid Realtime response accepted") }
+            catch { XCTAssertTrue(!error.localizedDescription.contains("private-source")) }
+            XCTAssertTrue(broken.closed)
+        }
+        let stalled = SpeechSocketFixture(events: [])
+        do { _ = try await stalled.client(timeout: .milliseconds(100)).speech(input: source); fail("stalled request returned") }
+        catch { XCTAssertTrue(error.localizedDescription.contains("超时")) }
+        XCTAssertTrue(stalled.closed)
     }
 
     func testErrorsAndRedirects() async {

@@ -670,8 +670,12 @@ struct SettingsScreen:View {
     }
     private var modelServices: some View {
         settingsCard("模型服务",icon:"slider.horizontal.3") {
-            providerPicker("选区翻译", local:"TranslateGemma", selection:$store.translationOnline)
-            providerPicker("论文摘要与生词讲解", local:"Qwen", selection:$store.analysisOnline)
+            providerPicker("选区翻译", local:"TranslateGemma", online:"OpenAI · " + OpenAIClient.textModel, selection:$store.translationOnline)
+            providerPicker("论文摘要与生词讲解", local:"Qwen", online:"OpenAI", selection:$store.analysisOnline)
+            if store.analysisOnline {
+                Text("摘要使用 \(OpenAIClient.summaryModel)，生词讲解使用 \(OpenAIClient.textModel)。")
+                    .font(.system(size:11)).foregroundStyle(Palette.muted)
+            }
             if !store.translationOnline {
                 HStack {Text("本地翻译模型").font(.system(size:12));Spacer();TextField("translategemma:4b",text:$model).textFieldStyle(.roundedBorder).frame(width:230)}
             }
@@ -688,7 +692,9 @@ struct SettingsScreen:View {
             } else if speechProvider == "openai" {
                 HStack {
                     Text("在线音色"); Spacer()
-                    Picker("在线音色",selection:Binding(get:{onlineVoice},set:{store.audio.stop();onlineVoice=$0})) {
+                    Picker("在线音色",selection:Binding(get:{
+                        OpenAIClient.voices.contains(onlineVoice) ? onlineVoice : OpenAIClient.defaultVoice
+                    },set:{store.audio.stop();onlineVoice=$0})) {
                         ForEach(OpenAIClient.voices,id:\.self) { Text($0.capitalized).tag($0) }
                     }.labelsHidden().frame(width:230)
                 }.font(.system(size:12))
@@ -701,12 +707,12 @@ struct SettingsScreen:View {
             OnlineKeySettings(store:store)
         }
     }
-    private func providerPicker(_ title:String, local:String, selection:Binding<Bool>) -> some View {
+    private func providerPicker(_ title:String, local:String, online:String, selection:Binding<Bool>) -> some View {
         HStack {
             Text(title); Spacer()
             Picker(title, selection:selection) {
                 Text(local + " · 本地").tag(false)
-                Text("OpenAI · " + OpenAIClient.textModel).tag(true)
+                Text(online).tag(true)
             }.labelsHidden().frame(width:230)
         }.font(.system(size:12))
     }

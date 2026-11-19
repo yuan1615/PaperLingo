@@ -23,7 +23,7 @@ final class SummaryTests {
         XCTAssertEqual(payload, [["page": "2", "text": "Introduction page 1."], ["page": "3", "text": "Introduction page 2."]])
         var stale = opening
         stale.chunks[0].page = 3
-        do { _ = try stale.modelInput(); fail("Accepted a cached page outside the cloud summary scope") } catch {}
+        do { _ = try stale.modelInput(); fail("Accepted a cached page outside the opening-text summary scope") } catch {}
         stale = opening
         stale.chunks[0].paperID = "other"
         do { _ = try stale.modelInput(); fail("Accepted a cached page from a different paper") } catch {}

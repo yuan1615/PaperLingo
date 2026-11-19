@@ -1,8 +1,27 @@
 import Foundation
+import CoreGraphics
 @_spi(Testing) import PaperCore
 
 // Runs through scripts/check-review-ui.sh with PAPERLINGO_UI_CHECK_SOURCE set to this file.
-// Only synthetic documents and a process-local URLProtocol participate in these requests.
+// All documents are synthetic. Both the Responses transport and the Realtime socket are process-local.
+private actor HeldSpeechSocket: RealtimeSpeechSocket {
+    private var sent = false
+    func send(_ json: String) { sent = true }
+    func receive() async throws -> Data {
+        if !sent { return Data(#"{"type":"session.created"}"#.utf8) }
+        try await Task.sleep(for: .seconds(30))
+        throw URLError(.timedOut)
+    }
+    func waitForUtterance() async throws {
+        for _ in 0..<150 {
+            if sent { return }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        throw AppError.message("Held Realtime fixture received no utterance")
+    }
+    nonisolated func close() {}
+}
+
 private final class OnlineResearchProtocol: URLProtocol {
     private static let lock = NSLock()
     private static var inputs: [String] = []
@@ -29,8 +48,11 @@ private final class OnlineResearchProtocol: URLProtocol {
                 }
             }
             let body = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-            guard let input = body?["input"] as? String,
-                  let url = request.url, ["https://api.openai.com/v1/responses", "https://api.openai.com/v1/audio/speech"].contains(url.absoluteString) else {
+            let messages = body?["input"] as? [[String: Any]]
+            let content = messages?.first?["content"] as? [[String: String]]
+            let pdf = content?.first(where: { $0["type"] == "input_file" })?["file_data"]
+            guard let input = body?["input"] as? String ?? pdf,
+                  let url = request.url, url.absoluteString == "https://api.openai.com/v1/responses" else {
                 throw AppError.message("Unexpected test request")
             }
             let (invalid, suspended) = Self.lock.withLock {
@@ -75,7 +97,8 @@ private final class OnlineResearchProtocol: URLProtocol {
     }
 
     static func main() async throws {
-        let mock = OpenAIClient(apiKey: "fixture-only", protocolClass: OnlineResearchProtocol.self)
+        let speech = HeldSpeechSocket()
+        let mock = OpenAIClient(apiKey: "fixture-only", protocolClass: OnlineResearchProtocol.self, realtimeSocket: { _ in speech })
         let store = AppStore(onlineClient: { mock })
         guard let db = store.db else { throw AppError.message("Missing isolated database") }
         try check(!store.translationOnline && !store.analysisOnline, "Fresh installation uses local text services")
@@ -112,14 +135,14 @@ private final class OnlineResearchProtocol: URLProtocol {
         try check(!store.translationBlocked && !store.translationOnline, "Local translation is available during a cloud summary")
         UserDefaults.standard.set("openai", forKey: "speechProvider")
         store.audio.speak("A held online utterance.")
-        try await waitForRequest(after: beforeSwitch + 1)
+        try await speech.waitForUtterance()
         store.stopLocalEngines()
         try check(store.researchTask?.isCancelled == false && store.audio.generating,
                   "Stopping local engines preserves both an in-flight cloud summary and online speech")
         store.audio.stop()
         store.analysisOnline = false
         await store.researchTask?.value
-        try check(!store.researchBusy && !store.researchIsCloudText && store.digests[paper.id]?.id == digest.id && OnlineResearchProtocol.sent.count == beforeSwitch + 2,
+        try check(!store.researchBusy && !store.researchIsCloudText && store.digests[paper.id]?.id == digest.id && OnlineResearchProtocol.sent.count == beforeSwitch + 1,
                   "Switching summary service cancels the in-flight request and preserves the saved digest")
         OnlineResearchProtocol.suspendResponses(false)
         store.analysisOnline = true
@@ -141,7 +164,7 @@ private final class OnlineResearchProtocol: URLProtocol {
         store.showWordDetails(word, force: true)
         await store.wordExplanationTask?.value
         let value = store.explanation(for: word)
-        try check(value?.model == OpenAIClient.analysisSignature && value?.content.meaning.contains("稳健") == true, "Explicit generation stores a validated contextual explanation")
+        try check(value?.model == OpenAIClient.wordSignature && value?.content.meaning.contains("稳健") == true, "Explicit generation stores a validated contextual explanation")
         let input = try JSONDecoder().decode(WordExplanationInput.self, from: Data(OnlineResearchProtocol.sent.last!.utf8))
         try check(input.expression == word.text && input.context == original, "Word request uses the selected expression and its source sentence")
         OnlineResearchProtocol.suspendResponses(true)
@@ -181,5 +204,63 @@ private final class OnlineResearchProtocol: URLProtocol {
         store.openReview()
         store.resumeWordExplanationIfNeeded()
         try check(OnlineResearchProtocol.sent.count == beforeFailure + 3, "Practice reads locally saved explanations without an online request")
+        try await checkPDFLibrary(store: store, db: db, openingDigest: digest)
+    }
+
+    static func checkPDFLibrary(store: AppStore, db: Database, openingDigest: PaperDigest) async throws {
+        let pdf = Paper(title: "Synthetic figures", filename: "fixture.pdf", kind: "PDF")
+        let web = Paper(title: "Synthetic webpage", filename: "fixture.txt", kind: "WEB")
+        let pdfURL = store.fileURL(pdf)
+        var box = CGRect(x: 0, y: 0, width: 200, height: 200)
+        guard let drawing = CGContext(pdfURL as CFURL, mediaBox: &box, nil) else { throw AppError.message("Missing fixture PDF") }
+        for page in 1...4 {
+            drawing.beginPDFPage(nil)
+            drawing.fill(CGRect(x: page * 10, y: 10, width: 5, height: 5))
+            drawing.endPDFPage()
+        }
+        drawing.closePDF()
+        try "Second webpage.".write(to: store.fileURL(web), atomically: true, encoding: .utf8)
+        try db.addPaper(pdf)
+        try db.addPaper(web)
+        var old = openingDigest
+        old.id = UUID().uuidString
+        old.paperID = pdf.id
+        old.processedPages = 3
+        old.totalPages = 4
+        try db.saveDigest(old)
+        var oldUnit = try db.passages(paperID: pdf.id)[0]
+        oldUnit.vector = [1, 0]
+        try db.savePassageVectors([oldUnit], model: "fixture")
+        try store.reload()
+        try check(try db.exportPaperMarkdown(pdf).contains("前 3 页文字"), "Previously saved opening summaries retain their scope")
+        store.analysisOnline = false
+        try check(!store.needsSummary(pdf), "The old opening summary still satisfies the local batch")
+        let baseline = OnlineResearchProtocol.sent.count
+        store.analysisOnline = true
+        let pending = store.papers.filter(store.needsSummary)
+        try check(Set(pending.map(\.id)) == [pdf.id, web.id] && OnlineResearchProtocol.sent.count == baseline,
+                  "Switching to OpenAI queues old PDF openings and missing webpages only on explicit generation")
+        store.startResearch(pending)
+        await store.researchTask?.value
+        let sent = OnlineResearchProtocol.sent.dropFirst(baseline)
+        let prefix = "data:application/pdf;base64,"
+        let bytes = sent.first(where: { $0.hasPrefix(prefix) }).flatMap { Data(base64Encoded: String($0.dropFirst(prefix.count))) }
+        try check(sent.count == 2 && bytes == (try Data(contentsOf: pdfURL)) && sent.contains(where: { $0.contains("Second webpage.") }),
+                  "A mixed library batch submits every byte of a four-page image-only PDF and the separate webpage opening")
+        guard let full = store.digests[pdf.id], let unit = try db.passages(paperID: pdf.id).first else {
+            throw AppError.message("Full PDF summary or search entry missing")
+        }
+        try check(PaperSummary.isCurrent(full) && full.pipeline == PaperSummary.fullPDFVersion && full.totalPages == 4 &&
+                  full.model == OpenAIClient.analysisSignature && store.textStatuses[pdf.id] == nil, "Full PDF summary bypasses local OCR and opening caches")
+        try check(unit.id != oldUnit.id && unit.vector.isEmpty && unit.section == PaperSummary.fullPDFVersion &&
+                  unit.embeddingInput == PaperSummary.indexText(full), "The scope change invalidates the former opening's vector even for identical generated text")
+        try check(try db.exportPaperMarkdown(pdf).contains("PDF 全文摘要 · 共 4 页") && !store.needsSummary(pdf) && !store.needsSummary(web),
+                  "Markdown and subsequent batches recognize the full summary")
+        OnlineResearchProtocol.failResponses(true)
+        store.startResearch([pdf], refreshText: true)
+        await store.researchTask?.value
+        OnlineResearchProtocol.failResponses(false)
+        try check(store.researchError != nil && store.digests[pdf.id]?.id == full.id &&
+                  OnlineResearchProtocol.sent.last?.hasPrefix(prefix) == true, "Manual regeneration submits the full PDF again and keeps the saved result on failure")
     }
 }

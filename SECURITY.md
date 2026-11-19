@@ -2,7 +2,7 @@
 
 ## Supported version
 
-目前维护 v0.3.x。PaperLingo 本地引擎监听回环地址。用户可以为特定任务选择 OpenAI，在线请求直接发往官方 HTTPS 接口。
+目前维护 v0.3.x。PaperLingo 本地引擎监听回环地址。用户可以为特定任务选择 OpenAI，在线请求使用官方 HTTPS 或加密 WebSocket 接口。
 
 ## Reporting a vulnerability
 
@@ -18,4 +18,4 @@
 
 API Key 由用户在 App 内输入，保存于本机登录钥匙串，关闭钥匙串项目同步。项目源码、配置文件、偏好设置、导出文件和发行包均不保存该密钥。换机时请重新配置。若密钥泄露，请在 OpenAI 项目撤销并重新创建密钥。
 
-每项功能默认本地运行。选择 OpenAI 后，翻译发送选区，摘要发送有限的开头文字，词语讲解发送表达和原句片段，朗读发送清理后的文本。线上客户端只允许固定的 OpenAI 接口，拒绝重定向。错误提示不会显示响应原文或鉴权请求头。文本请求使用 `store: false`。服务端仍可能按平台政策保留滥用监测日志。[OpenAI 数据控制说明](https://developers.openai.com/api/docs/guides/your-data)
+每项功能默认本地运行。选择 OpenAI 后，翻译发送选区，生成 PDF 摘要时发送完整 PDF 字节（包括文件内的元数据、图表、批注和附录），网页摘要发送开头文字，词语讲解发送表达和原句片段，朗读发送清理后的文本。线上客户端只允许固定的 OpenAI 接口，拒绝重定向。错误提示不会显示响应原文或鉴权请求头。文本请求使用 `store: false`。服务端仍可能按平台政策保留滥用监测日志。[OpenAI 数据控制说明](https://developers.openai.com/api/docs/guides/your-data)

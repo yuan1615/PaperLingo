@@ -310,8 +310,8 @@ extension Database {
         ]
         if let digest {
             lines += [
-                "", PaperSummary.isCurrent(digest) ? "## AI 中文摘要" : "## 历史 AI 汇总（请重新生成前三页摘要）", "", digest.oneLine, "",
-                "模型：\(digest.model) · \(digest.created.formatted()) · \(PaperSummary.isCurrent(digest) ? (paper.kind == "PDF" ? "仅依据前 \(min(3, digest.totalPages)) 页文字，原文件共 \(digest.totalPages) 页" : "仅依据网页开头最多 15,000 字符") : "旧版处理范围 \(digest.processedPages)/\(digest.totalPages) 页")。结果为作者报告，仍需对照原论文核实。",
+                "", PaperSummary.isCurrent(digest) ? "## AI 中文摘要" : "## 历史 AI 汇总", "", digest.oneLine, "",
+                "\(PaperSummary.coverage(digest, for: paper)) · \(digest.model) · \(digest.created.formatted())。结果为作者报告，仍需对照原论文核实。",
             ]
             for topic in PaperSummary.topics {
                 lines += ["", "### \(PaperSummary.title(topic))", ""]

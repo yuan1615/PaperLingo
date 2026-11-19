@@ -127,9 +127,9 @@ extension Database {
         let previous=Dictionary(try passages(paperID:paper.id).map{($0.id,$0)},uniquingKeysWith:{$1})
         try write("DELETE FROM research_passages WHERE paper_id=?", [paper.id])
         try write("DELETE FROM passage_search WHERE paper_id=?", [paper.id])
-        guard let summary = PaperSummary.indexText(digest) else { return }
+        guard let pipeline = digest?.pipeline, let summary = PaperSummary.indexText(digest) else { return }
         var unit = ResearchPassage(paperID: paper.id, source: "论文摘要", sourceID: paper.id,
-            title: paper.title, section: PaperSummary.version, page: nil, text: summary)
+            title: paper.title, section: pipeline, page: nil, text: summary)
         if let old=previous[unit.id] {
             unit.vector=old.vector;unit.vectorModel=old.vectorModel
         }

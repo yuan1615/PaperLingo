@@ -17,6 +17,11 @@ extension AppStore {
     var embeddingSignature: String {
         ResearchModels.embedding + "@" + (engines.modelDigests[ResearchModels.embedding] ?? "unavailable") + "|" + PaperSummary.indexVersion
     }
+    func needsSummary(_ paper: Paper) -> Bool {
+        let digest = digests[paper.id]
+        guard PaperSummary.isCurrent(digest) else { return true }
+        return analysisOnline && paper.kind == "PDF" && digest?.pipeline != PaperSummary.fullPDFVersion
+    }
     func record(for paper: Paper) -> PaperRecord { records[paper.id] ?? PaperRecord(paperID: paper.id) }
     func showArchive(_ paper: Paper) {
         catalogPaperID = paper.id
@@ -147,7 +152,7 @@ extension AppStore {
                     units=try db?.passages() ?? []
                 }
                 guard units.contains(where: { $0.vectorModel == signature && !$0.vector.isEmpty }) else {
-                    throw AppError.message("请先生成前三页摘要，再建立中文摘要索引。标题、资料和笔记仍可用关键词检索。")
+                    throw AppError.message("请先生成论文摘要，再建立中文摘要索引。标题、资料和笔记仍可用关键词检索。")
                 }
                 let vector = try await researchClient.embeddings([query], query: true)[0]
                 try Task.checkCancellation()
@@ -170,7 +175,7 @@ extension AppStore {
                 searchMessage = scores == nil ? "重排服务未就绪，当前显示通过阈值的论文候选；可检查本地引擎。\(indexed)/\(papers.count) 篇有当前语义索引。" : "\(indexed)/\(papers.count) 篇参与语义检索，每篇一个概览索引。\(searchHits.isEmpty ? "没有找到足够相关的论文。":"候选已由本机重排模型复核，可查看概览了解关联。")"
                 if pending>0 {searchMessage += " 仍有 \(pending) 篇待更新，可点击建立 / 更新检索索引。"}
                 let missing=papers.filter{!PaperSummary.isCurrent(digests[$0.id])}.count
-                if missing>0 {searchMessage += " \(missing) 篇待生成前三页摘要，暂只参与关键词检索。"}
+                if missing>0 {searchMessage += " \(missing) 篇待生成摘要，暂只参与关键词检索。"}
             } catch is CancellationError {} catch {
                 if !Task.isCancelled {
                     searchMessage = error.localizedDescription
@@ -213,7 +218,7 @@ extension AppStore {
         guard !researchBusy, !searching, !targets.isEmpty else { return }
         let eligible = summarize ? targets : targets.filter { PaperSummary.isCurrent(digests[$0.id]) }
         guard !eligible.isEmpty else {
-            researchMessage = "请先生成前三页摘要，再建立摘要索引。"
+            researchMessage = "请先生成论文摘要，再建立摘要索引。"
             return
         }
         let online = summarize && analysisOnline
@@ -258,17 +263,26 @@ extension AppStore {
                 try Task.checkCancellation()
                 researchPaperID = paper.id
                 if summarize {
-                    researchMessage = "\(number+1)/\(targets.count) · 读取开头内容：\(paper.title)"
-                    let source = try await openingSource(paper, force: refreshText)
-                    guard !source.chunks.isEmpty else { throw AppError.message("\(paper.title) 前三页没有可提取的文字，请先 OCR。") }
-                    researchMessage = "\(number+1)/\(targets.count) · 生成研究动机、核心方法与实验结果"
-                    try Task.checkCancellation()
                     let digest: PaperDigest
-                    if let cloud {
-                        digest = try await cloud.summarizeOpening(source)
+                    let progress = "\(number+1)/\(targets.count)"
+                    if let cloud, paper.kind == "PDF" {
+                        researchMessage = "\(progress) · 正在用 OpenAI 整理完整 PDF《\(paper.title)》"
+                        digest = try await cloud.summarizePDF(paperID: paper.id, url: fileURL(paper))
                     } else {
-                        localAnalysisUsed = true
-                        digest = try await researchClient.summarizeOpening(source, signature: modelSignature)
+                        researchMessage = "\(progress) · 正在读取《\(paper.title)》的开头"
+                        let source = try await openingSource(paper, force: refreshText)
+                        guard !source.chunks.isEmpty else {
+                            let reason = paper.kind == "PDF" ? "前三页没有可提取的文字，请先 OCR。" : "网页开头没有可提取的文字。"
+                            throw AppError.message("《\(paper.title)》" + reason)
+                        }
+                        try Task.checkCancellation()
+                        researchMessage = "\(progress) · 生成研究动机、核心方法与实验结果"
+                        if let cloud {
+                            digest = try await cloud.summarizeOpening(source)
+                        } else {
+                            localAnalysisUsed = true
+                            digest = try await researchClient.summarizeOpening(source, signature: modelSignature)
+                        }
                     }
                     try Task.checkCancellation()
                     try db?.saveDigest(digest)

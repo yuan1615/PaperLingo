@@ -4,48 +4,42 @@ import Foundation
 
 // Run with PAPERLINGO_UI_CHECK_SOURCE=Tests/PaperLingoUITests/OnlineSpeechChecks.swift
 // bash scripts/check-review-ui.sh. All requests are intercepted inside the process.
-private final class SpeechFixture: URLProtocol, @unchecked Sendable {
+private actor SpeechFixture: RealtimeSpeechSocket {
     private static let lock = NSLock()
     private static var inputs: [String] = []
     private static var cancellations = 0
-    private var held = false
+    private let endpoint: URL?
+    private var sent = false
+    private var pending: [Data] = [Data(#"{"type":"session.created"}"#.utf8)]
     static var received: [String] { lock.withLock { inputs } }
     static var cancelled: Int { lock.withLock { cancellations } }
-    override class func canInit(with request: URLRequest) -> Bool { true }
-    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    init(_ request: URLRequest) { endpoint = request.url }
 
-    override func startLoading() {
-        var body = request.httpBody ?? Data()
-        if let stream = request.httpBodyStream {
-            stream.open()
-            defer { stream.close() }
-            var buffer = [UInt8](repeating: 0, count: 4096)
-            while true {
-                let count = stream.read(&buffer, maxLength: buffer.count)
-                if count <= 0 { break }
-                body.append(contentsOf: buffer.prefix(count))
-            }
+    func send(_ json: String) throws {
+        guard !sent, endpoint?.absoluteString == "wss://api.openai.com/v1/realtime?model=" + OpenAIClient.speechModel,
+              let event = try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any],
+              event["type"] as? String == "response.create", let fields = event["response"] as? [String: Any],
+              let inputs = fields["input"] as? [[String: Any]], inputs.count == 1,
+              let content = inputs[0]["content"] as? [[String: String]], content.count == 1,
+              content[0]["type"] == "input_text", let input = content[0]["text"] else {
+            throw URLError(.badServerResponse)
         }
-        guard request.url?.absoluteString == "https://api.openai.com/v1/audio/speech",
-              let fields = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
-              let input = fields["input"] as? String,
-              Set(fields.keys) == ["model","voice","input","response_format"] else {
-            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
-            return
-        }
-        held = input.contains("Hold this request")
+        sent = true
         Self.lock.withLock { Self.inputs.append(input) }
-        if held { return }
-        // One second of silent mono PCM16 at 16 kHz.
-        let wav = Data(base64Encoded: "UklGRiR9AABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQB9AAA=")! + Data(count: 32000)
-        let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: ["Content-Type":"audio/wav"])!
-        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: wav)
-        client?.urlProtocolDidFinishLoading(self)
+        if input.contains("Hold this request") { return }
+        // One second of silent mono PCM16 at 24 kHz.
+        let delta = Data(count: 48000).base64EncodedString()
+        pending.append(try JSONSerialization.data(withJSONObject: ["type":"response.output_audio.delta", "delta":delta]))
+        pending.append(Data(#"{"type":"response.output_audio.done"}"#.utf8))
+        pending.append(Data(#"{"type":"response.done","response":{"status":"completed"}}"#.utf8))
     }
-    override func stopLoading() {
-        if held { Self.lock.withLock { Self.cancellations += 1 } }
+    func receive() async throws -> Data {
+        if !pending.isEmpty { return pending.removeFirst() }
+        do { try await Task.sleep(for: .seconds(30)) }
+        catch { Self.lock.withLock { Self.cancellations += 1 }; throw error }
+        throw URLError(.timedOut)
     }
+    nonisolated func close() {}
 }
 
 @main private struct OnlineSpeechChecks {
@@ -70,7 +64,7 @@ private final class SpeechFixture: URLProtocol, @unchecked Sendable {
             guard condition else { throw AppError.message(message) }
             print("PASS " + message)
         }
-        let client = OpenAIClient(apiKey: "synthetic-speech-fixture", protocolClass: SpeechFixture.self)
+        let client = OpenAIClient(apiKey: "synthetic-speech-fixture", protocolClass: URLProtocol.self, realtimeSocket: { SpeechFixture($0) })
         var preemptions = 0
         audio.onlineClient = { client }
         audio.prepareForSpeech = { preemptions += 1 }

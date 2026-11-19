@@ -4,6 +4,13 @@ Notable changes are recorded here. Version numbers follow `MAJOR.MINOR.PATCH`; v
 
 ## [Unreleased]
 
+## 0.3.1 - 2026-11-19
+
+- Send the original PDF in an inline Responses file input when generating an OpenAI paper summary. Use the paper’s figures, tables, and later pages for the same three-part Chinese summary. Local PDF summaries and web snapshots keep their existing input bounds.
+- Mark each summary’s source coverage, distinguish earlier opening summaries from full-PDF results, and continue to index a single Chinese summary per paper.
+- Use GPT-6 Luna for translation and word explanations and GPT-6.2 Sol for paper summaries.
+- Use GPT-Realtime-2.1 mini for OpenAI narration, with text input and built-in voices.
+
 ## [0.3.0] - 2026-11-19
 
 - Choose local models or OpenAI independently for reading translation, paper summaries and vocabulary explanations, and speech. Local processing remains the default.

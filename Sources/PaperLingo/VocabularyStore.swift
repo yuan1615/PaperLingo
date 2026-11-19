@@ -118,7 +118,7 @@ extension AppStore {
     }
     private func saveWordExplanation(_ draft:WordExplanationDraft,word:Vocabulary,context:String,online:Bool) throws {
         guard let db else {throw AppError.message("数据库未打开，讲解未保存。")}
-        let signature = online ? OpenAIClient.analysisSignature : ResearchModels.analysis+"@"+(engines.modelDigests[ResearchModels.analysis] ?? "unknown")
+        let signature = online ? OpenAIClient.wordSignature : ResearchModels.analysis+"@"+(engines.modelDigests[ResearchModels.analysis] ?? "unknown")
         let value=try WordExplanation(word:word,context:context,model:signature,content:draft)
         try db.saveWordExplanation(value)
         wordExplanations[word.id]=value

@@ -34,7 +34,7 @@ struct OnlineKeySettings: View {
                 }
             }
             if let issue { Text(issue).foregroundStyle(Palette.orange) }
-            Text("选择 OpenAI 后，翻译发送选区，摘要发送 PDF 前三页文字或网页开头，词语讲解发送词条和原句片段，朗读发送清理后的英文。索引与个人笔记保存在本机。")
+            Text("在线翻译发送选区，词语讲解发送词条和原句片段，朗读发送清理后的英文。生成在线 PDF 摘要时会发送完整文件，包括图表、附录和文件自带的批注。网页摘要只发送网页开头。研究库笔记和检索索引保存在本机。")
             HStack {
                 Text("在线请求按 API 用量计费。")
                 Link("创建项目密钥", destination: URL(string:"https://platform.openai.com/api-keys")!)
